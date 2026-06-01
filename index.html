@@ -51,10 +51,10 @@
 
 <div id="hud" style="opacity:0">
   <span id="orbHud">◍ 0 / 0</span>
-  <span class="hint">Stick: move &nbsp;•&nbsp; tap stick = jump &nbsp;•&nbsp; drag elsewhere: look</span>
+  <span class="hint">Stick: move &nbsp;•&nbsp; tap anywhere = jump &nbsp;•&nbsp; drag: look</span>
 </div>
 
-<div id="stick"><div id="knob"></div><div class="lbl">MOVE · TAP = JUMP</div></div>
+<div id="stick"><div id="knob"></div><div class="lbl">MOVE</div></div>
 
 <div class="overlay" id="startScreen">
   <span class="pill">3d hub world</span>
@@ -62,8 +62,8 @@
   <p class="sub">A low-gravity hub world. Float, leap between islands, and collect every orb.</p>
   <div class="legend">
     Bottom-left stick → drag to move<br>
-    Tap the stick → big floaty jump<br>
-    Drag anywhere else → look / turn the camera
+    Tap anywhere → big floaty jump<br>
+    Drag (off the stick) → look / turn the camera
   </div>
   <button class="btn" id="startBtn">ENTER</button>
   <div id="err"></div>
@@ -119,6 +119,7 @@ const move = { x: 0, y: 0 };      // -1..1 joystick
 let moveId = null, moveCX = 0, moveCY = 0;   // stick center (fixed)
 let moveSX = 0, moveSY = 0, moveStart = 0, moveMaxD = 0; // for tap-to-jump
 let lookId = null, lookLX = 0, lookLY = 0;
+let lookSX = 0, lookSY = 0, lookStart = 0, lookMaxD = 0; // for tap-to-jump anywhere
 let jumpQueued = false;
 const KNOB_MAX = 50;              // px knob travel
 const keys = {};
@@ -145,6 +146,7 @@ function initThree() {
   scene.add(pink);
 
   clock = new THREE.Clock();
+  buildSky();
   buildWorld();
   buildPlayer();
 
@@ -155,6 +157,77 @@ function onResize() {
   renderer.setSize(window.innerWidth, window.innerHeight);
   camera.aspect = window.innerWidth/window.innerHeight;
   camera.updateProjectionMatrix();
+}
+
+// ---------- procedural, seamlessly-tiling night-sky texture ----------
+function makeSkyTexture() {
+  const S = 512;
+  const cv = document.createElement("canvas");
+  cv.width = cv.height = S;
+  const g = cv.getContext("2d");
+
+  // base
+  g.fillStyle = "#05060f";
+  g.fillRect(0, 0, S, S);
+
+  // draw a shape and its 8 neighbours so everything tiles with no seam
+  const wrapped = (fn) => {
+    for (let ix = -1; ix <= 1; ix++)
+      for (let iy = -1; iy <= 1; iy++) {
+        g.save(); g.translate(ix * S, iy * S); fn(); g.restore();
+      }
+  };
+
+  // soft nebula clouds
+  const neb = [[39,225,193],[255,93,143],[120,90,255]];
+  for (let i = 0; i < 11; i++) {
+    const x = Math.random()*S, y = Math.random()*S, r = 80 + Math.random()*150;
+    const c = neb[(Math.random()*neb.length)|0];
+    wrapped(() => {
+      const rg = g.createRadialGradient(x, y, 0, x, y, r);
+      rg.addColorStop(0, `rgba(${c[0]},${c[1]},${c[2]},0.11)`);
+      rg.addColorStop(1, "rgba(0,0,0,0)");
+      g.fillStyle = rg; g.beginPath(); g.arc(x, y, r, 0, 6.283); g.fill();
+    });
+  }
+
+  // stars (additive so overlaps glow)
+  g.globalCompositeOperation = "lighter";
+  for (let i = 0; i < 720; i++) {
+    const x = Math.random()*S, y = Math.random()*S;
+    const big = Math.random() < 0.08;
+    const r = big ? Math.random()*1.4 + 1.0 : Math.random()*0.9 + 0.2;
+    const b = 0.45 + Math.random()*0.55;
+    const tint = Math.random() < 0.22 ? `rgba(160,210,255,${b})` : `rgba(255,255,255,${b})`;
+    wrapped(() => { g.fillStyle = tint; g.beginPath(); g.arc(x, y, r, 0, 6.283); g.fill(); });
+  }
+  // a handful of bright glow stars
+  for (let i = 0; i < 9; i++) {
+    const x = Math.random()*S, y = Math.random()*S, r = 6 + Math.random()*9;
+    wrapped(() => {
+      const rg = g.createRadialGradient(x, y, 0, x, y, r);
+      rg.addColorStop(0, "rgba(255,255,255,0.9)");
+      rg.addColorStop(0.3, "rgba(180,220,255,0.45)");
+      rg.addColorStop(1, "rgba(0,0,0,0)");
+      g.fillStyle = rg; g.beginPath(); g.arc(x, y, r, 0, 6.283); g.fill();
+    });
+  }
+  g.globalCompositeOperation = "source-over";
+
+  const tex = new THREE.CanvasTexture(cv);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+function buildSky() {
+  const tex = makeSkyTexture();
+  tex.repeat.set(5, 3);                       // tile the texture across the dome
+  const geo = new THREE.SphereGeometry(500, 40, 24);
+  const m = new THREE.MeshBasicMaterial({
+    map: tex, side: THREE.BackSide, fog: false, depthWrite: false,
+  });
+  scene.add(new THREE.Mesh(geo, m));
 }
 
 // helper: box mesh + collider, positioned by CENTER
@@ -422,6 +495,7 @@ function pStart(id, x, y) {
     move.x = 0; move.y = 0; knobEl.style.transform = "translate(0,0)";
   } else if (lookId === null) {
     lookId = id; lookLX = x; lookLY = y;
+    lookSX = x; lookSY = y; lookStart = performance.now(); lookMaxD = 0;
   }
 }
 function pMove(id, x, y) {
@@ -436,15 +510,20 @@ function pMove(id, x, y) {
     yaw   -= (x - lookLX) * 0.005;
     pitch -= (y - lookLY) * 0.005;
     lookLX = x; lookLY = y;
+    lookMaxD = Math.max(lookMaxD, Math.hypot(x - lookSX, y - lookSY));
   }
 }
 function pEnd(id) {
   if (id === moveId) {
-    // quick press without real drag = jump
+    // quick press on the stick without real drag = jump
     if (performance.now() - moveStart < 260 && moveMaxD < 16) jumpQueued = true;
     moveId = null; move.x = 0; move.y = 0; knobEl.style.transform = "translate(0,0)";
   }
-  if (id === lookId) lookId = null;
+  if (id === lookId) {
+    // quick tap anywhere (no real drag) = jump
+    if (performance.now() - lookStart < 260 && lookMaxD < 16) jumpQueued = true;
+    lookId = null;
+  }
 }
 
 canvas.addEventListener("touchstart", e => { e.preventDefault();
