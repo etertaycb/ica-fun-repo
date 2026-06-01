@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<meta name="theme-color" content="#0b1026" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<title>Neon Jump</title>
+<style>
+  :root { --bg:#0b1026; --accent:#27e1c1; --accent2:#ff5d8f; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html, body {
+    margin:0; height:100%; overflow:hidden;
+    background:var(--bg);
+    font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color:#eaf2ff; user-select:none; -webkit-user-select:none;
+    touch-action:manipulation;
+  }
+  #game {
+    display:block; width:100vw; height:100vh; height:100dvh;
+    touch-action:none;
+  }
+  .overlay {
+    position:fixed; inset:0; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; text-align:center;
+    padding:24px; gap:18px;
+    background:radial-gradient(120% 90% at 50% 0%, rgba(39,225,193,0.12), transparent 60%);
+    transition:opacity .25s ease; z-index:10;
+  }
+  .overlay.hidden { opacity:0; pointer-events:none; }
+  .title {
+    font-size:clamp(40px, 13vw, 92px); font-weight:800; letter-spacing:2px;
+    margin:0; line-height:1;
+    background:linear-gradient(90deg, var(--accent), var(--accent2));
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+    text-shadow:0 0 30px rgba(39,225,193,0.35);
+  }
+  .sub { font-size:clamp(15px,4.5vw,20px); opacity:.85; max-width:340px; line-height:1.5; margin:0; }
+  .btn {
+    appearance:none; border:none; cursor:pointer;
+    padding:16px 40px; font-size:20px; font-weight:700; color:#04121a;
+    border-radius:999px;
+    background:linear-gradient(90deg, var(--accent), #6ef0d8);
+    box-shadow:0 8px 30px rgba(39,225,193,0.45);
+    transition:transform .08s ease;
+  }
+  .btn:active { transform:scale(0.95); }
+  .best { font-size:15px; opacity:.7; letter-spacing:1px; }
+  .pill {
+    display:inline-block; padding:4px 14px; border-radius:999px;
+    border:1px solid rgba(255,255,255,0.18); font-size:13px; opacity:.8;
+  }
+  #scoreHud {
+    position:fixed; top:env(safe-area-inset-top, 14px); left:0; right:0;
+    text-align:center; font-size:44px; font-weight:800; padding-top:14px;
+    text-shadow:0 0 18px rgba(39,225,193,0.4); pointer-events:none;
+    opacity:0; transition:opacity .2s; z-index:5;
+  }
+  #scoreHud.show { opacity:1; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="scoreHud">0</div>
+
+<div class="overlay" id="startScreen">
+  <span class="pill">one-tap arcade</span>
+  <h1 class="title">NEON<br>JUMP</h1>
+  <p class="sub">Tap anywhere to flap. Slip through the gaps. Don't touch the walls.</p>
+  <button class="btn" id="startBtn">TAP TO PLAY</button>
+  <div class="best" id="bestStart"></div>
+</div>
+
+<div class="overlay hidden" id="overScreen">
+  <h1 class="title" style="font-size:clamp(34px,11vw,72px)">GAME OVER</h1>
+  <p class="sub" id="overText"></p>
+  <button class="btn" id="retryBtn">PLAY AGAIN</button>
+  <div class="best" id="bestOver"></div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  const canvas = document.getElementById("game");
+  const ctx = canvas.getContext("2d");
+  const startScreen = document.getElementById("startScreen");
+  const overScreen = document.getElementById("overScreen");
+  const scoreHud = document.getElementById("scoreHud");
+  const overText = document.getElementById("overText");
+  const bestStart = document.getElementById("bestStart");
+  const bestOver = document.getElementById("bestOver");
+
+  let W = 0, H = 0, DPR = 1;
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    canvas.width = Math.floor(W * DPR);
+    canvas.height = Math.floor(H * DPR);
+    canvas.style.width = W + "px";
+    canvas.style.height = H + "px";
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  }
+  window.addEventListener("resize", resize);
+  resize();
+
+  const BEST_KEY = "neonjump_best";
+  let best = parseInt(localStorage.getItem(BEST_KEY) || "0", 10) || 0;
+  function showBest() {
+    const t = best > 0 ? "Best: " + best : "No score yet — be the first!";
+    bestStart.textContent = t;
+    bestOver.textContent = "Best: " + best;
+  }
+  showBest();
+
+  // Game state
+  const STATE = { MENU: 0, PLAY: 1, OVER: 2 };
+  let state = STATE.MENU;
+
+  let player, gravity, flap, obstacles, particles, stars;
+  let score, spawnTimer, spawnGap, speed, time, gapSize, shake;
+
+  function reset() {
+    player = { x: 0, y: 0, vy: 0, r: 0, trail: [] };
+    gravity = 0;        // set in start() based on H
+    flap = 0;
+    obstacles = [];
+    particles = [];
+    score = 0;
+    spawnTimer = 0;
+    speed = 0;
+    time = 0;
+    shake = 0;
+    buildStars();
+  }
+
+  function buildStars() {
+    stars = [];
+    const n = Math.round((W * H) / 14000);
+    for (let i = 0; i < n; i++) {
+      stars.push({
+        x: Math.random() * W,
+        y: Math.random() * H,
+        z: 0.3 + Math.random() * 1.4,
+        s: 0.6 + Math.random() * 1.6
+      });
+    }
+  }
+
+  function start() {
+    reset();
+    player.r = Math.max(12, Math.min(W, H) * 0.035);
+    player.x = W * 0.28;
+    player.y = H * 0.45;
+    player.vy = 0;
+    gravity = H * 0.0016;
+    flap = -H * 0.0125;
+    speed = Math.max(2.6, W * 0.005);
+    gapSize = Math.max(150, H * 0.32);
+    spawnGap = Math.max(70, W * 0.42); // distance between obstacles
+    state = STATE.PLAY;
+    startScreen.classList.add("hidden");
+    overScreen.classList.add("hidden");
+    scoreHud.classList.add("show");
+    scoreHud.textContent = "0";
+  }
+
+  function gameOver() {
+    state = STATE.OVER;
+    shake = 18;
+    burst(player.x, player.y, "#ff5d8f", 34);
+    scoreHud.classList.remove("show");
+    const isBest = score > best;
+    if (isBest) { best = score; localStorage.setItem(BEST_KEY, String(best)); }
+    overText.innerHTML = "You scored <b style='color:#27e1c1'>" + score + "</b>" +
+      (isBest && score > 0 ? "<br><span style='color:#ff5d8f'>★ New best!</span>" : "");
+    showBest();
+    // small delay so the tap that killed you doesn't instantly restart
+    setTimeout(() => overScreen.classList.remove("hidden"), 120);
+  }
+
+  function doFlap() {
+    if (state !== STATE.PLAY) return;
+    player.vy = flap;
+    burst(player.x - player.r, player.y, "#27e1c1", 6, 1.2);
+  }
+
+  function spawnObstacle() {
+    const margin = gapSize * 0.5 + 30;
+    const gy = margin + Math.random() * (H - margin * 2);
+    obstacles.push({ x: W + 40, gy: gy, w: Math.max(46, W * 0.11), passed: false });
+  }
+
+  function burst(x, y, color, count, spread) {
+    spread = spread || 4;
+    for (let i = 0; i < count; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const sp = Math.random() * spread + 0.5;
+      particles.push({
+        x, y,
+        vx: Math.cos(a) * sp,
+        vy: Math.sin(a) * sp,
+        life: 1, color,
+        s: Math.random() * 3 + 1.5
+      });
+    }
+  }
+
+  // Input
+  function onTap(e) {
+    e.preventDefault();
+    if (state === STATE.PLAY) doFlap();
+  }
+  canvas.addEventListener("pointerdown", onTap, { passive: false });
+  window.addEventListener("keydown", (e) => {
+    if (e.code === "Space" || e.code === "ArrowUp") {
+      e.preventDefault();
+      if (state === STATE.PLAY) doFlap();
+      else if (state === STATE.MENU) start();
+    }
+  });
+
+  document.getElementById("startBtn").addEventListener("click", start);
+  document.getElementById("retryBtn").addEventListener("click", start);
+  // tapping anywhere on the start overlay also starts
+  startScreen.addEventListener("pointerdown", (e) => {
+    if (e.target.id !== "startBtn") start();
+  });
+
+  function update() {
+    time++;
+    if (shake > 0) shake *= 0.85;
+
+    // stars drift
+    const sSpeed = state === STATE.PLAY ? speed : 0.6;
+    for (const st of stars) {
+      st.x -= st.z * 0.6 + (state === STATE.PLAY ? st.z * 0.4 : 0.2);
+      if (st.x < -2) { st.x = W + 2; st.y = Math.random() * H; }
+    }
+
+    // particles
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const p = particles[i];
+      p.x += p.vx; p.y += p.vy;
+      p.vy += 0.06; p.life -= 0.025;
+      if (p.life <= 0) particles.splice(i, 1);
+    }
+
+    if (state !== STATE.PLAY) return;
+
+    // difficulty ramp
+    speed += 0.0009;
+    if (gapSize > H * 0.2) gapSize -= 0.03;
+
+    // player physics
+    player.vy += gravity;
+    player.y += player.vy;
+    player.trail.unshift({ x: player.x, y: player.y });
+    if (player.trail.length > 12) player.trail.pop();
+
+    // floor / ceiling
+    if (player.y - player.r < 0 || player.y + player.r > H) {
+      player.y = Math.max(player.r, Math.min(H - player.r, player.y));
+      gameOver();
+      return;
+    }
+
+    // spawn obstacles by distance
+    spawnTimer += speed;
+    if (spawnTimer >= spawnGap) {
+      spawnTimer = 0;
+      spawnObstacle();
+    }
+
+    // move obstacles + collide + score
+    for (let i = obstacles.length - 1; i >= 0; i--) {
+      const o = obstacles[i];
+      o.x -= speed;
+      if (!o.passed && o.x + o.w < player.x) {
+        o.passed = true;
+        score++;
+        scoreHud.textContent = score;
+        burst(player.x, player.y, "#27e1c1", 8, 2);
+      }
+      // collision: rect halves (top and bottom of gap)
+      const halfGap = gapSize / 2;
+      const inX = player.x + player.r > o.x && player.x - player.r < o.x + o.w;
+      if (inX) {
+        const topH = o.gy - halfGap;
+        const botY = o.gy + halfGap;
+        if (player.y - player.r < topH || player.y + player.r > botY) {
+          gameOver();
+          return;
+        }
+      }
+      if (o.x + o.w < -20) obstacles.splice(i, 1);
+    }
+  }
+
+  function roundRect(x, y, w, h, r) {
+    r = Math.min(r, w / 2, h / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  function render() {
+    ctx.save();
+    if (shake > 0.5) {
+      ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
+    }
+
+    // background gradient
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, "#0d1430");
+    g.addColorStop(1, "#08091a");
+    ctx.fillStyle = g;
+    ctx.fillRect(-30, -30, W + 60, H + 60);
+
+    // stars
+    for (const st of stars) {
+      ctx.globalAlpha = 0.25 + st.z * 0.4;
+      ctx.fillStyle = "#9fd8ff";
+      ctx.fillRect(st.x, st.y, st.s, st.s);
+    }
+    ctx.globalAlpha = 1;
+
+    // obstacles
+    const halfGapBase = gapSize / 2;
+    for (const o of obstacles) {
+      const halfGap = halfGapBase;
+      const topH = o.gy - halfGap;
+      const botY = o.gy + halfGap;
+      ctx.fillStyle = "#ff5d8f";
+      ctx.shadowColor = "rgba(255,93,143,0.7)";
+      ctx.shadowBlur = 18;
+      roundRect(o.x, -20, o.w, topH + 20, 14); ctx.fill();
+      roundRect(o.x, botY, o.w, H - botY + 20, 14); ctx.fill();
+      ctx.shadowBlur = 0;
+      // glow caps
+      ctx.fillStyle = "rgba(255,255,255,0.85)";
+      ctx.fillRect(o.x, topH - 6, o.w, 6);
+      ctx.fillRect(o.x, botY, o.w, 6);
+    }
+
+    // particles
+    for (const p of particles) {
+      ctx.globalAlpha = Math.max(0, p.life);
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.s, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // player (only while playing/over)
+    if (state === STATE.PLAY || state === STATE.OVER) {
+      // trail
+      for (let i = 0; i < player.trail.length; i++) {
+        const t = player.trail[i];
+        ctx.globalAlpha = (1 - i / player.trail.length) * 0.4;
+        ctx.fillStyle = "#27e1c1";
+        ctx.beginPath();
+        ctx.arc(t.x, t.y, player.r * (1 - i / player.trail.length), 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+
+      const tilt = Math.max(-0.5, Math.min(0.9, player.vy * 0.04));
+      ctx.save();
+      ctx.translate(player.x, player.y);
+      ctx.rotate(tilt);
+      ctx.shadowColor = "rgba(39,225,193,0.9)";
+      ctx.shadowBlur = 22;
+      ctx.fillStyle = "#27e1c1";
+      ctx.beginPath();
+      ctx.arc(0, 0, player.r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      // eye
+      ctx.fillStyle = "#04121a";
+      ctx.beginPath();
+      ctx.arc(player.r * 0.35, -player.r * 0.2, player.r * 0.22, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    ctx.restore();
+  }
+
+  function loop() {
+    update();
+    render();
+    requestAnimationFrame(loop);
+  }
+
+  reset();
+  loop();
+})();
+</script>
+</body>
+</html>
