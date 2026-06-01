@@ -3,461 +3,497 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-<meta name="theme-color" content="#0b1026" />
+<meta name="theme-color" content="#05060f" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
-<title>Neon Runner</title>
+<title>Neon Drift — 3D Hub</title>
 <style>
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
-  html, body {
-    margin:0; height:100%; overflow:hidden; background:#0b1026;
+  html, body { margin:0; height:100%; overflow:hidden; background:#05060f;
     font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    color:#eaf2ff; user-select:none; -webkit-user-select:none; touch-action:none;
-  }
-  #game { display:block; width:100vw; height:100vh; height:100dvh; touch-action:none; }
+    color:#eaf2ff; user-select:none; -webkit-user-select:none; touch-action:none; }
+  #c { display:block; width:100vw; height:100vh; height:100dvh; }
 
-  /* faint control hints (mostly invisible) */
-  #hints { position:fixed; inset:0; z-index:4; pointer-events:none; }
-  #hints div {
-    position:absolute; display:flex; align-items:center; justify-content:center;
-    font-size:13px; letter-spacing:2px; color:#fff; opacity:.14;
-    font-weight:700; transition:opacity .3s;
-  }
-  #hLeft  { left:0;  top:0; width:50%; height:74%; }
-  #hRight { right:0; top:0; width:50%; height:74%; }
-  #hJump  { left:0;  bottom:0; width:100%; height:26%;
-            border-top:1px dashed rgba(255,255,255,.12); }
-  #hints.fade div { opacity:0; }
-
-  .overlay {
-    position:fixed; inset:0; z-index:10; display:flex; flex-direction:column;
-    align-items:center; justify-content:center; text-align:center; padding:24px; gap:16px;
-    background:radial-gradient(120% 90% at 50% 0%, rgba(39,225,193,.12), transparent 60%);
-    transition:opacity .25s ease;
-  }
-  .overlay.hidden { opacity:0; pointer-events:none; }
-  .title {
-    font-size:clamp(38px,12vw,84px); font-weight:800; letter-spacing:2px; margin:0; line-height:1;
-    background:linear-gradient(90deg,#27e1c1,#ff5d8f); -webkit-background-clip:text;
-    background-clip:text; color:transparent; text-shadow:0 0 30px rgba(39,225,193,.35);
-  }
-  .sub { font-size:clamp(14px,4.3vw,19px); opacity:.85; max-width:330px; line-height:1.55; margin:0; }
-  .btn {
-    appearance:none; border:none; cursor:pointer; padding:16px 40px; font-size:20px; font-weight:700;
-    color:#04121a; border-radius:999px; background:linear-gradient(90deg,#27e1c1,#6ef0d8);
-    box-shadow:0 8px 30px rgba(39,225,193,.45); transition:transform .08s ease;
-  }
-  .btn:active { transform:scale(.95); }
-  .legend { font-size:13px; opacity:.6; line-height:1.7; }
-  .pill { display:inline-block; padding:4px 14px; border-radius:999px;
-          border:1px solid rgba(255,255,255,.18); font-size:13px; opacity:.8; }
   #hud { position:fixed; top:env(safe-area-inset-top,12px); left:0; right:0; z-index:5;
-         padding:12px 16px 0; display:flex; justify-content:space-between;
-         font-size:18px; font-weight:700; pointer-events:none; text-shadow:0 0 12px rgba(0,0,0,.6); }
+    padding:12px 16px 0; display:flex; justify-content:space-between; align-items:flex-start;
+    font-size:16px; font-weight:700; pointer-events:none; text-shadow:0 2px 8px rgba(0,0,0,.7); }
+  #hud .hint { font-size:12px; font-weight:500; opacity:.55; max-width:52%; line-height:1.4; text-align:right; }
+
+  /* fixed virtual control stick (bottom-left) — drag to move, tap to jump */
+  #stick { position:fixed; z-index:6; left:30px; bottom:calc(env(safe-area-inset-bottom,20px) + 34px);
+    width:132px; height:132px; border-radius:50%;
+    border:2px solid rgba(39,225,193,.4); background:rgba(39,225,193,.07);
+    pointer-events:none; opacity:0; transition:opacity .25s; }
+  #stick .lbl { position:absolute; left:0; right:0; bottom:-20px; text-align:center;
+    font-size:11px; letter-spacing:1px; opacity:.55; white-space:nowrap; }
+  #knob { position:absolute; left:50%; top:50%; width:58px; height:58px; margin:-29px 0 0 -29px;
+    border-radius:50%; background:rgba(39,225,193,.55); box-shadow:0 0 18px rgba(39,225,193,.6); }
+
+  .overlay { position:fixed; inset:0; z-index:10; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; text-align:center; padding:24px; gap:16px;
+    background:radial-gradient(120% 90% at 50% 0%, rgba(39,225,193,.14), rgba(5,6,15,.92) 65%);
+    transition:opacity .3s; }
+  .overlay.hidden { opacity:0; pointer-events:none; }
+  .title { font-size:clamp(34px,11vw,76px); font-weight:800; letter-spacing:2px; margin:0; line-height:1;
+    background:linear-gradient(90deg,#27e1c1,#ff5d8f); -webkit-background-clip:text; background-clip:text;
+    color:transparent; text-shadow:0 0 30px rgba(39,225,193,.35); }
+  .sub { font-size:clamp(14px,4.2vw,18px); opacity:.85; max-width:340px; line-height:1.55; margin:0; }
+  .legend { font-size:13px; opacity:.65; line-height:1.8; }
+  .btn { appearance:none; border:none; cursor:pointer; padding:16px 42px; font-size:20px; font-weight:700;
+    color:#04121a; border-radius:999px; background:linear-gradient(90deg,#27e1c1,#6ef0d8);
+    box-shadow:0 8px 30px rgba(39,225,193,.45); }
+  .btn:active { transform:scale(.95); }
+  .pill { display:inline-block; padding:4px 14px; border-radius:999px; border:1px solid rgba(255,255,255,.18); font-size:13px; opacity:.8; }
+  #err { font-size:13px; color:#ff9bb4; max-width:320px; }
 </style>
 </head>
 <body>
-<canvas id="game"></canvas>
+<canvas id="c"></canvas>
 
-<div id="hud" style="opacity:0" >
-  <span id="coinHud">★ 0</span>
-  <span id="timeHud">0.0s</span>
+<div id="hud" style="opacity:0">
+  <span id="orbHud">◍ 0 / 0</span>
+  <span class="hint">Stick: move &nbsp;•&nbsp; tap stick = jump &nbsp;•&nbsp; drag elsewhere: look</span>
 </div>
 
-<div id="hints"><div id="hLeft">◀ LEFT</div><div id="hRight">RIGHT ▶</div><div id="hJump">▲ JUMP</div></div>
+<div id="stick"><div id="knob"></div><div class="lbl">MOVE · TAP = JUMP</div></div>
 
 <div class="overlay" id="startScreen">
-  <span class="pill">touch platformer</span>
-  <h1 class="title">NEON<br>RUNNER</h1>
-  <p class="sub">Reach the goal flag and grab the stars!</p>
+  <span class="pill">3d hub world</span>
+  <h1 class="title">NEON<br>DRIFT</h1>
+  <p class="sub">A low-gravity hub world. Float, leap between islands, and collect every orb.</p>
   <div class="legend">
-    Left half of screen → move left<br>
-    Right half → move right<br>
-    Bottom band → jump (tap again in air to double-jump)
+    Bottom-left stick → drag to move<br>
+    Tap the stick → big floaty jump<br>
+    Drag anywhere else → look / turn the camera
   </div>
-  <button class="btn" id="startBtn">START</button>
+  <button class="btn" id="startBtn">ENTER</button>
+  <div id="err"></div>
 </div>
 
 <div class="overlay hidden" id="winScreen">
-  <h1 class="title">YOU WIN!</h1>
+  <h1 class="title">ALL ORBS!</h1>
   <p class="sub" id="winText"></p>
-  <button class="btn" id="retryBtn">PLAY AGAIN</button>
+  <button class="btn" id="againBtn">EXPLORE AGAIN</button>
 </div>
 
-<script>
-(function () {
-  "use strict";
-  const canvas = document.getElementById("game");
-  const ctx = canvas.getContext("2d");
-  const startScreen = document.getElementById("startScreen");
-  const winScreen = document.getElementById("winScreen");
-  const winText = document.getElementById("winText");
-  const hud = document.getElementById("hud");
-  const coinHud = document.getElementById("coinHud");
-  const timeHud = document.getElementById("timeHud");
-  const hints = document.getElementById("hints");
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+</script>
+<script type="module">
+import * as THREE from "three";
 
-  let W = 0, H = 0, DPR = 1, SCALE = 1;
-  const DESIGN_H = 800; // world units tall = one screen
-  function resize() {
-    DPR = Math.min(window.devicePixelRatio || 1, 2);
-    W = window.innerWidth; H = window.innerHeight;
-    canvas.width = Math.floor(W * DPR); canvas.height = Math.floor(H * DPR);
-    canvas.style.width = W + "px"; canvas.style.height = H + "px";
-    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-    SCALE = H / DESIGN_H;            // world unit -> screen px
-  }
-  window.addEventListener("resize", resize);
-  resize();
+const startScreen = document.getElementById("startScreen");
+const winScreen   = document.getElementById("winScreen");
+const winText     = document.getElementById("winText");
+const hud         = document.getElementById("hud");
+const orbHud      = document.getElementById("orbHud");
+const stickEl     = document.getElementById("stick");
+const knobEl      = document.getElementById("knob");
+const errEl       = document.getElementById("err");
 
-  // ---------- Level (world units, y goes down) ----------
-  // ground at y=700, world from x=0 to x=GOAL
-  const platforms = [
-    { x:-100, y:700, w:900, h:200 },
-    { x:980, y:700, w:600, h:200 },
-    { x:1760,y:700, w:1400,h:200 },
-    // floating platforms
-    { x:520, y:560, w:200, h:36 },
-    { x:760, y:440, w:200, h:36 },
-    { x:1040,y:520, w:170, h:36 },
-    { x:1280,y:420, w:170, h:36 },
-    { x:1500,y:560, w:180, h:36 },
-    { x:2050,y:560, w:200, h:36 },
-    { x:2320,y:440, w:200, h:36 },
-    { x:2600,y:540, w:240, h:36 },
-  ];
-  const coinDefs = [
-    {x:600,y:500},{x:840,y:380},{x:1120,y:460},{x:1360,y:360},
-    {x:1580,y:500},{x:2130,y:500},{x:2400,y:380},{x:2700,y:480},
-    {x:300,y:640},{x:1840,y:640},
-  ];
-  const GOAL_X = 3050, GOAL_Y = 700;
-  const SPAWN = { x: 120, y: 600 };
+const canvas = document.getElementById("c");
+let renderer, scene, camera, clock;
+let started = false;
 
-  let player, coins, cam, coinCount, startTime, elapsed, particles, won, deaths;
+// ---- tunables ----
+const GRAVITY   = 9.0;    // micro gravity (low -> floaty)
+const JUMP_VEL  = 17.0;   // huge jump
+const MOVE_SPEED= 11.0;
+const AIR_CTRL  = 0.7;
+const PLAYER_R  = 0.55;   // small player
 
-  function reset() {
-    player = { x:SPAWN.x, y:SPAWN.y, w:46, h:60, vx:0, vy:0,
-               onGround:false, coyote:0, jumps:0, face:1, anim:0 };
-    coins = coinDefs.map(c => ({ x:c.x, y:c.y, got:false, t:Math.random()*6.28 }));
-    cam = { x:0 };
-    coinCount = 0; elapsed = 0; won = false; deaths = 0;
-    particles = [];
-    startTime = performance.now();
-  }
+// ---- world state ----
+const colliders = [];     // {min:Vec3, max:Vec3}
+const orbs = [];          // {mesh, pos, got}
+let orbCount = 0;
+const player = {
+  pos: new THREE.Vector3(0, 2, 0),
+  vel: new THREE.Vector3(),
+  grounded: false,
+  mesh: null,
+};
+let yaw = 0, pitch = 0.5;   // camera orbit
+const camDist = 9;
 
-  function start() {
-    reset();
-    startScreen.classList.add("hidden");
-    winScreen.classList.add("hidden");
-    hud.style.opacity = "1";
-    hints.classList.remove("fade");
-    // fade the control hints away after a few seconds
-    setTimeout(() => hints.classList.add("fade"), 4000);
-    running = true;
-  }
-  let running = false;
+// ---- input ----
+const move = { x: 0, y: 0 };      // -1..1 joystick
+let moveId = null, moveCX = 0, moveCY = 0;   // stick center (fixed)
+let moveSX = 0, moveSY = 0, moveStart = 0, moveMaxD = 0; // for tap-to-jump
+let lookId = null, lookLX = 0, lookLY = 0;
+let jumpQueued = false;
+const KNOB_MAX = 50;              // px knob travel
+const keys = {};
 
-  function win() {
-    won = true; running = false;
-    hud.style.opacity = "0";
-    winText.innerHTML = "Time: <b style='color:#27e1c1'>" + elapsed.toFixed(1) + "s</b>" +
-      "<br>Stars: <b style='color:#ffd84d'>" + coinCount + "/" + coins.length + "</b>" +
-      (deaths === 0 ? "<br><span style='color:#27e1c1'>★ Flawless — no falls!</span>" : "");
-    winScreen.classList.remove("hidden");
-  }
+function initThree() {
+  renderer = new THREE.WebGLRenderer({ canvas, antialias:true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
 
-  function burst(x, y, color, n, spread) {
-    spread = spread || 4;
-    for (let i=0;i<n;i++){
-      const a=Math.random()*6.283, sp=Math.random()*spread+1;
-      particles.push({x,y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp-1,life:1,
-                      s:Math.random()*3+2,color});
-    }
-  }
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x06070f);
+  scene.fog = new THREE.Fog(0x06070f, 60, 280);
 
-  // ---------- Multitouch controls (invisible zones) ----------
-  // pointers tracked by id; each frame we read their positions to set held state.
-  const pointers = new Map();
-  let jumpQueued = false;
+  camera = new THREE.PerspectiveCamera(62, window.innerWidth/window.innerHeight, 0.1, 1000);
 
-  function zoneOf(px, py) {
-    if (py >= H * 0.74) return "jump";          // bottom band
-    return px < W * 0.5 ? "left" : "right";
-  }
-  function onDown(e) {
-    for (const t of (e.changedTouches || [e])) {
-      const id = t.identifier !== undefined ? t.identifier : "mouse";
-      const x = t.clientX, y = t.clientY;
-      pointers.set(id, { x, y });
-      if (zoneOf(x, y) === "jump") jumpQueued = true;  // edge-trigger jump
-    }
-    if (running) e.preventDefault();
-  }
-  function onMove(e) {
-    for (const t of (e.changedTouches || [e])) {
-      const id = t.identifier !== undefined ? t.identifier : "mouse";
-      if (pointers.has(id)) pointers.set(id, { x:t.clientX, y:t.clientY });
-    }
-    if (running) e.preventDefault();
-  }
-  function onUp(e) {
-    for (const t of (e.changedTouches || [e])) {
-      const id = t.identifier !== undefined ? t.identifier : "mouse";
-      pointers.delete(id);
-    }
-  }
-  // Touch events (multitouch) + mouse fallback for desktop testing
-  canvas.addEventListener("touchstart", onDown, { passive:false });
-  canvas.addEventListener("touchmove",  onMove, { passive:false });
-  canvas.addEventListener("touchend",   onUp,   { passive:false });
-  canvas.addEventListener("touchcancel",onUp,   { passive:false });
-  let mouseDown = false;
-  canvas.addEventListener("mousedown", e => { mouseDown = true; onDown(e); });
-  canvas.addEventListener("mousemove", e => { if (mouseDown) onMove(e); });
-  window.addEventListener("mouseup",   e => { mouseDown = false; onUp({changedTouches:[{identifier:"mouse"}]}); });
+  // lights
+  const hemi = new THREE.HemisphereLight(0x9fd8ff, 0x10122a, 0.9);
+  scene.add(hemi);
+  const dir = new THREE.DirectionalLight(0xffffff, 1.1);
+  dir.position.set(40, 80, 30);
+  scene.add(dir);
+  const pink = new THREE.PointLight(0xff5d8f, 0.8, 200);
+  pink.position.set(0, 40, 0);
+  scene.add(pink);
 
-  // keyboard for desktop
-  const keys = {};
-  window.addEventListener("keydown", e => {
-    keys[e.code] = true;
-    if (e.code === "Space" || e.code === "ArrowUp") { jumpQueued = true; e.preventDefault(); }
-    if (e.code === "Enter" && !running) start();
+  clock = new THREE.Clock();
+  buildWorld();
+  buildPlayer();
+
+  window.addEventListener("resize", onResize);
+}
+
+function onResize() {
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  camera.aspect = window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+}
+
+// helper: box mesh + collider, positioned by CENTER
+const mat = (color, emissive=0x000000, ei=0.0, rough=0.6) =>
+  new THREE.MeshStandardMaterial({ color, emissive, emissiveIntensity:ei, roughness:rough, metalness:0.1 });
+
+function addBox(cx, cy, cz, w, h, d, material) {
+  const geo = new THREE.BoxGeometry(w, h, d);
+  const m = new THREE.Mesh(geo, material);
+  m.position.set(cx, cy, cz);
+  scene.add(m);
+  colliders.push({
+    min: new THREE.Vector3(cx - w/2, cy - h/2, cz - d/2),
+    max: new THREE.Vector3(cx + w/2, cy + h/2, cz + d/2),
   });
-  window.addEventListener("keyup", e => { keys[e.code] = false; });
+  return m;
+}
 
-  function readControls() {
-    let left = false, right = false;
-    for (const p of pointers.values()) {
-      const z = zoneOf(p.x, p.y);
-      if (z === "left") left = true;
-      else if (z === "right") right = true;
+function addOrb(x, y, z) {
+  const geo = new THREE.IcosahedronGeometry(0.7, 0);
+  const m = new THREE.Mesh(geo, mat(0xffd84d, 0xffb300, 1.4, 0.3));
+  m.position.set(x, y, z);
+  scene.add(m);
+  const halo = new THREE.PointLight(0xffd84d, 0.5, 14);
+  m.add(halo);
+  orbs.push({ mesh: m, pos: new THREE.Vector3(x,y,z), got:false, t: Math.random()*6.28 });
+}
+
+function buildWorld() {
+  // ground (big)
+  const groundMat = mat(0x0c1330, 0x07203a, 0.25, 0.95);
+  addBox(0, -2, 0, 600, 4, 600, groundMat);
+  const grid = new THREE.GridHelper(600, 120, 0x1c6f7a, 0x12324a);
+  grid.position.y = 0.02; scene.add(grid);
+
+  const teal = mat(0x123b55, 0x1d6f7a, 0.5);
+  const deep = mat(0x141a3a, 0x202a66, 0.35);
+  const rose = mat(0x3a1430, 0x9c2a5a, 0.5);
+
+  // central plaza + glowing monument
+  addBox(0, 1, 0, 44, 2, 44, deep);
+  addBox(0, 14, 0, 4, 24, 4, mat(0x27e1c1, 0x27e1c1, 1.6, 0.3));
+  addOrb(0, 30, 0);
+
+  // ring of 12 pillars
+  for (let i = 0; i < 12; i++) {
+    const a = (i/12) * Math.PI * 2;
+    const r = 40;
+    const x = Math.cos(a)*r, z = Math.sin(a)*r;
+    const ph = 8 + (i % 3) * 5;
+    addBox(x, ph/2 + 2, z, 5, ph, 5, i % 2 ? teal : rose);
+    if (i % 2 === 0) addOrb(x, ph + 4, z);
+  }
+
+  // four staircases climbing outward (N,S,E,W)
+  const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
+  for (const [dx, dz] of dirs) {
+    for (let s = 0; s < 7; s++) {
+      const dist = 60 + s*9;
+      const y = 2 + s*3;
+      addBox(dx*dist, y, dz*dist, 14, 2, 14, deep);
+      if (s === 6) addOrb(dx*dist, y + 3, dz*dist);
     }
-    if (keys["ArrowLeft"] || keys["KeyA"]) left = true;
-    if (keys["ArrowRight"]|| keys["KeyD"]) right = true;
-    return { left, right };
   }
 
-  document.getElementById("startBtn").addEventListener("click", start);
-  document.getElementById("retryBtn").addEventListener("click", start);
-
-  // ---------- Physics ----------
-  const GRAV = 0.9, MOVE = 1.4, FRICTION = 0.78, MAXVX = 9,
-        JUMP_V = -17, COYOTE = 8;
-
-  function aabb(a, b) {
-    return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  // floating islands (authored)
+  const islands = [
+    [ 90, 22,  90, 18, 4, 18],
+    [-95, 30, 70, 16, 4, 16],
+    [ 70, 40, -100, 20, 4, 20],
+    [-110, 18, -90, 22, 4, 22],
+    [ 130, 52, 10, 16, 4, 16],
+    [ 10, 60, 140, 18, 4, 18],
+    [-140, 46, -20, 16, 4, 16],
+    [ 0, 75, -160, 24, 4, 24],
+  ];
+  for (const [x,y,z,w,h,d] of islands) {
+    addBox(x, y, z, w, h, d, mat(0x10204a, 0x2a4cff, 0.5));
+    addOrb(x, y + 4, z);
+    // a little spire on each
+    addBox(x, y + 6, z, 1.6, 8, 1.6, mat(0xff5d8f, 0xff5d8f, 1.4, 0.3));
   }
 
-  function update() {
-    if (!running) { updateParticles(); return; }
-    elapsed = (performance.now() - startTime) / 1000;
-    const c = readControls();
+  // a big arch / gateway to the south
+  addBox(-12, 16, 110, 4, 32, 6, teal);
+  addBox( 12, 16, 110, 4, 32, 6, teal);
+  addBox(  0, 33, 110, 32, 4, 6, teal);
+  addOrb(0, 40, 110);
 
-    // horizontal
-    if (c.left)  { player.vx -= MOVE; player.face = -1; }
-    if (c.right) { player.vx += MOVE; player.face = 1; }
-    if (!c.left && !c.right) player.vx *= FRICTION;
-    player.vx = Math.max(-MAXVX, Math.min(MAXVX, player.vx));
-    if (Math.abs(player.vx) < 0.05) player.vx = 0;
+  // far stepping-stones leading way out (sense of scale)
+  for (let i = 0; i < 6; i++) {
+    const x = 60 + i*30, y = 8 + Math.sin(i)*6, z = -60 - i*28;
+    addBox(x, y, z, 10, 3, 10, mat(0x1a1140, 0x6a2cff, 0.5));
+    if (i % 2) addOrb(x, y + 3, z);
+  }
 
-    // jump (with coyote + double jump)
-    if (jumpQueued) {
-      if (player.onGround || player.coyote > 0) {
-        player.vy = JUMP_V; player.jumps = 1; player.onGround = false; player.coyote = 0;
-        burst(player.x+player.w/2, player.y+player.h, "#27e1c1", 8, 3);
-      } else if (player.jumps < 2) {
-        player.vy = JUMP_V * 0.88; player.jumps = 2;
-        burst(player.x+player.w/2, player.y+player.h/2, "#6ef0d8", 10, 4);
+  orbCount = orbs.length;
+  updateOrbHud();
+}
+
+function buildPlayer() {
+  const g = new THREE.SphereGeometry(PLAYER_R, 24, 16);
+  const m = new THREE.Mesh(g, mat(0x27e1c1, 0x27e1c1, 1.1, 0.25));
+  scene.add(m);
+  // a soft point light so the player glows on surfaces
+  const pl = new THREE.PointLight(0x27e1c1, 0.8, 12);
+  m.add(pl);
+  player.mesh = m;
+
+  // blob shadow
+  const ring = new THREE.Mesh(
+    new THREE.CircleGeometry(PLAYER_R * 2.2, 24),
+    new THREE.MeshBasicMaterial({ color:0x000000, transparent:true, opacity:0.35 })
+  );
+  ring.rotation.x = -Math.PI/2;
+  scene.add(ring);
+  player.shadow = ring;
+
+  respawn();
+}
+
+function respawn() {
+  player.pos.set(0, 6, 24);
+  player.vel.set(0,0,0);
+  player.grounded = false;
+}
+
+function updateOrbHud() {
+  const got = orbCount - orbs.filter(o => !o.got).length;
+  orbHud.textContent = "◍ " + got + " / " + orbCount;
+}
+
+// ---------- collision: sphere vs AABBs ----------
+function resolveCollisions() {
+  player.grounded = false;
+  const c = player.pos, r = PLAYER_R;
+
+  // ground plane safety (top of ground box at y=0)
+  if (c.y - r < 0) { c.y = r; if (player.vel.y < 0) player.vel.y = 0; player.grounded = true; }
+
+  for (let iter = 0; iter < 3; iter++) {
+    for (const b of colliders) {
+      // closest point on box to sphere center
+      const px = Math.max(b.min.x, Math.min(c.x, b.max.x));
+      const py = Math.max(b.min.y, Math.min(c.y, b.max.y));
+      const pz = Math.max(b.min.z, Math.min(c.z, b.max.z));
+      let dx = c.x - px, dy = c.y - py, dz = c.z - pz;
+      let d2 = dx*dx + dy*dy + dz*dz;
+      if (d2 > r*r) continue;
+      let d = Math.sqrt(d2);
+      if (d < 1e-5) {
+        // center inside box: push up out of the top
+        c.y = b.max.y + r; player.vel.y = Math.max(player.vel.y, 0); player.grounded = true; continue;
       }
+      const nx = dx/d, ny = dy/d, nz = dz/d, push = r - d;
+      c.x += nx*push; c.y += ny*push; c.z += nz*push;
+      // kill velocity into the surface
+      const vn = player.vel.x*nx + player.vel.y*ny + player.vel.z*nz;
+      if (vn < 0) { player.vel.x -= vn*nx; player.vel.y -= vn*ny; player.vel.z -= vn*nz; }
+      if (ny > 0.5) player.grounded = true;
     }
-    jumpQueued = false;
-
-    player.vy += GRAV;
-    if (player.vy > 24) player.vy = 24;
-
-    // move X then resolve
-    player.x += player.vx;
-    for (const p of platforms) {
-      if (aabb(player, p)) {
-        if (player.vx > 0) player.x = p.x - player.w;
-        else if (player.vx < 0) player.x = p.x + p.w;
-        player.vx = 0;
-      }
-    }
-    // move Y then resolve
-    player.y += player.vy;
-    let grounded = false;
-    for (const p of platforms) {
-      if (aabb(player, p)) {
-        if (player.vy > 0) { player.y = p.y - player.h; grounded = true; }
-        else if (player.vy < 0) { player.y = p.y + p.h; }
-        player.vy = 0;
-      }
-    }
-    if (grounded) { player.onGround = true; player.jumps = 0; player.coyote = COYOTE; }
-    else { player.onGround = false; if (player.coyote > 0) player.coyote--; }
-
-    if (player.x < -50) { player.x = -50; player.vx = 0; }
-
-    // anim
-    if (Math.abs(player.vx) > 0.5) player.anim += 0.25;
-
-    // fell off
-    if (player.y > DESIGN_H + 200) {
-      deaths++;
-      burst(player.x+player.w/2, DESIGN_H, "#ff5d8f", 20, 5);
-      player.x = SPAWN.x; player.y = SPAWN.y; player.vx = 0; player.vy = 0;
-    }
-
-    // coins
-    for (const co of coins) {
-      if (co.got) continue;
-      co.t += 0.12;
-      const cx = co.x, cy = co.y + Math.sin(co.t)*6;
-      if (Math.abs((player.x+player.w/2)-cx) < 34 && Math.abs((player.y+player.h/2)-cy) < 40) {
-        co.got = true; coinCount++;
-        coinHud.textContent = "★ " + coinCount;
-        burst(cx, cy, "#ffd84d", 14, 4);
-      }
-    }
-
-    // goal
-    const goal = { x:GOAL_X, y:GOAL_Y-160, w:60, h:160 };
-    if (aabb(player, goal)) { burst(GOAL_X, GOAL_Y-160, "#27e1c1", 40, 6); win(); }
-
-    timeHud.textContent = elapsed.toFixed(1) + "s";
-
-    // camera follows player, clamped to level start
-    const target = player.x + player.w/2 - (W / SCALE) * 0.42;
-    cam.x += (target - cam.x) * 0.12;
-    if (cam.x < 0) cam.x = 0;
-
-    updateParticles();
   }
+}
 
-  function updateParticles() {
-    for (let i=particles.length-1;i>=0;i--){
-      const p=particles[i];
-      p.x+=p.vx; p.y+=p.vy; p.vy+=0.35; p.life-=0.025;
-      if (p.life<=0) particles.splice(i,1);
+// ---------- per-frame ----------
+const tmpF = new THREE.Vector3(), tmpR = new THREE.Vector3(), UP = new THREE.Vector3(0,1,0);
+
+function update(dt) {
+  // keyboard -> joystick
+  let kx = 0, ky = 0;
+  if (keys["KeyW"] || keys["ArrowUp"]) ky -= 1;
+  if (keys["KeyS"] || keys["ArrowDown"]) ky += 1;
+  if (keys["KeyA"] || keys["ArrowLeft"]) kx -= 1;
+  if (keys["KeyD"] || keys["ArrowRight"]) kx += 1;
+  const inX = moveId !== null ? move.x : kx;
+  const inY = moveId !== null ? move.y : ky;
+
+  // camera-relative movement basis (XZ)
+  camera.getWorldDirection(tmpF); tmpF.y = 0; tmpF.normalize();
+  tmpR.crossVectors(tmpF, UP).normalize();           // player's right
+  const fwdAmt = -inY;     // up on stick = forward
+  const rgtAmt =  inX;
+  const desired = new THREE.Vector3()
+    .addScaledVector(tmpF, fwdAmt)
+    .addScaledVector(tmpR, rgtAmt);
+  const mag = Math.min(1, desired.length());
+  if (mag > 0.001) desired.normalize().multiplyScalar(MOVE_SPEED * mag);
+
+  const ctrl = player.grounded ? 1 : AIR_CTRL;
+  player.vel.x += (desired.x - player.vel.x) * ctrl * Math.min(1, dt*12);
+  player.vel.z += (desired.z - player.vel.z) * ctrl * Math.min(1, dt*12);
+
+  // jump
+  if (jumpQueued && player.grounded) { player.vel.y = JUMP_VEL; player.grounded = false; }
+  jumpQueued = false;
+
+  // gravity
+  player.vel.y -= GRAVITY * dt;
+
+  // integrate
+  player.pos.addScaledVector(player.vel, dt);
+  resolveCollisions();
+
+  // fell off the world
+  if (player.pos.y < -40) respawn();
+
+  // mesh + shadow
+  player.mesh.position.copy(player.pos);
+  player.shadow.position.set(player.pos.x, 0.03, player.pos.z);
+  const fade = Math.max(0, 1 - player.pos.y / 60);
+  player.shadow.material.opacity = 0.35 * fade;
+
+  // orbs
+  for (const o of orbs) {
+    if (o.got) continue;
+    o.t += dt * 2;
+    o.mesh.position.y = o.pos.y + Math.sin(o.t) * 0.4;
+    o.mesh.rotation.y += dt * 1.5;
+    if (player.pos.distanceTo(o.mesh.position) < 1.6) {
+      o.got = true; o.mesh.visible = false;
+      updateOrbHud();
+      if (orbs.every(x => x.got)) onWin();
     }
   }
 
-  // ---------- Render ----------
-  function wx(x){ return (x - cam.x) * SCALE; }      // world x -> screen
-  function wy(y){ return y * SCALE; }
-  function ws(v){ return v * SCALE; }
+  // camera follow (orbit around player)
+  pitch = Math.max(-0.2, Math.min(1.2, pitch));
+  const cp = Math.cos(pitch), sp = Math.sin(pitch);
+  const ox = camDist * cp * Math.sin(yaw);
+  const oy = camDist * sp + 2.2;
+  const oz = camDist * cp * Math.cos(yaw);
+  camera.position.set(player.pos.x + ox, player.pos.y + oy, player.pos.z + oz);
+  camera.lookAt(player.pos.x, player.pos.y + 1.0, player.pos.z);
+}
 
-  function render() {
-    // sky
-    const g = ctx.createLinearGradient(0,0,0,H);
-    g.addColorStop(0,"#11183a"); g.addColorStop(1,"#080a1d");
-    ctx.fillStyle = g; ctx.fillRect(0,0,W,H);
+function onWin() {
+  const t = (clock.elapsedTime).toFixed(1);
+  winText.innerHTML = "You collected all <b style='color:#ffd84d'>" + orbCount +
+    "</b> orbs.<br>Keep exploring — the hub is yours.";
+  winScreen.classList.remove("hidden");
+}
 
-    // parallax hills
-    for (let layer=0; layer<2; layer++) {
-      const k = layer===0 ? 0.25 : 0.5;
-      ctx.fillStyle = layer===0 ? "rgba(39,225,193,0.06)" : "rgba(255,93,143,0.06)";
-      const baseY = H * (layer===0 ? 0.62 : 0.72);
-      ctx.beginPath(); ctx.moveTo(0,H);
-      for (let sx=0; sx<=W+80; sx+=80) {
-        const wxp = (sx + cam.x*SCALE*k) * 0.02;
-        ctx.lineTo(sx, baseY + Math.sin(wxp+layer)*40);
-      }
-      ctx.lineTo(W,H); ctx.closePath(); ctx.fill();
-    }
+function loop() {
+  requestAnimationFrame(loop);
+  const dt = Math.min(0.05, clock.getDelta());
+  if (started) update(dt);
+  renderer.render(scene, camera);
+}
 
-    // platforms
-    for (const p of platforms) {
-      const x = wx(p.x), y = wy(p.y), w = ws(p.w), h = ws(p.h);
-      if (x+w < -40 || x > W+40) continue;
-      ctx.fillStyle = "#1d2a55";
-      ctx.fillRect(x, y, w, h);
-      // neon top
-      ctx.fillStyle = "#27e1c1";
-      ctx.shadowColor = "rgba(39,225,193,0.8)"; ctx.shadowBlur = 16;
-      ctx.fillRect(x, y, w, Math.max(4, ws(6)));
-      ctx.shadowBlur = 0;
-    }
+// ---------- touch / mouse input ----------
+// A touch that begins on the fixed stick drives movement (and a quick tap = jump);
+// any other touch drags the camera (look).
+function onStick(x, y) {
+  const r = stickEl.getBoundingClientRect();
+  const cx = r.left + r.width/2, cy = r.top + r.height/2;
+  const grab = r.width/2 + 28;                // generous grab radius
+  return Math.hypot(x - cx, y - cy) <= grab;
+}
 
-    // coins (stars)
-    for (const co of coins) {
-      if (co.got) continue;
-      const cx = wx(co.x), cy = wy(co.y + Math.sin(co.t)*6);
-      if (cx < -40 || cx > W+40) continue;
-      drawStar(cx, cy, ws(15), "#ffd84d");
-    }
-
-    // goal flag
-    const gx = wx(GOAL_X), gy = wy(GOAL_Y);
-    if (gx > -80 && gx < W+80) {
-      ctx.strokeStyle = "#eaf2ff"; ctx.lineWidth = Math.max(3, ws(5));
-      ctx.beginPath(); ctx.moveTo(gx, gy); ctx.lineTo(gx, gy - ws(160)); ctx.stroke();
-      ctx.fillStyle = "#ff5d8f"; ctx.shadowColor="rgba(255,93,143,.7)"; ctx.shadowBlur=14;
-      ctx.beginPath();
-      ctx.moveTo(gx, gy - ws(160));
-      ctx.lineTo(gx + ws(70), gy - ws(140));
-      ctx.lineTo(gx, gy - ws(118));
-      ctx.closePath(); ctx.fill(); ctx.shadowBlur=0;
-    }
-
-    // particles
-    for (const p of particles) {
-      ctx.globalAlpha = Math.max(0, p.life);
-      ctx.fillStyle = p.color;
-      ctx.beginPath(); ctx.arc(wx(p.x), wy(p.y), ws(p.s), 0, 6.283); ctx.fill();
-    }
-    ctx.globalAlpha = 1;
-
-    // player
-    drawPlayer();
+function pStart(id, x, y) {
+  if (moveId === null && onStick(x, y)) {
+    const r = stickEl.getBoundingClientRect();
+    moveCX = r.left + r.width/2; moveCY = r.top + r.height/2;
+    moveId = id; moveSX = x; moveSY = y; moveStart = performance.now(); moveMaxD = 0;
+    move.x = 0; move.y = 0; knobEl.style.transform = "translate(0,0)";
+  } else if (lookId === null) {
+    lookId = id; lookLX = x; lookLY = y;
   }
-
-  function drawStar(cx, cy, r, color) {
-    ctx.save(); ctx.translate(cx, cy);
-    ctx.fillStyle = color; ctx.shadowColor = color; ctx.shadowBlur = 14;
-    ctx.beginPath();
-    for (let i=0;i<10;i++){
-      const ang = -Math.PI/2 + i*Math.PI/5;
-      const rr = i%2===0 ? r : r*0.45;
-      ctx.lineTo(Math.cos(ang)*rr, Math.sin(ang)*rr);
-    }
-    ctx.closePath(); ctx.fill(); ctx.shadowBlur = 0; ctx.restore();
+}
+function pMove(id, x, y) {
+  if (id === moveId) {
+    let dx = x - moveCX, dy = y - moveCY;
+    const len = Math.hypot(dx, dy);
+    if (len > KNOB_MAX) { dx = dx/len*KNOB_MAX; dy = dy/len*KNOB_MAX; }
+    move.x = dx / KNOB_MAX; move.y = dy / KNOB_MAX;
+    moveMaxD = Math.max(moveMaxD, Math.hypot(x - moveSX, y - moveSY));
+    knobEl.style.transform = `translate(${dx}px,${dy}px)`;
+  } else if (id === lookId) {
+    yaw   -= (x - lookLX) * 0.005;
+    pitch -= (y - lookLY) * 0.005;
+    lookLX = x; lookLY = y;
   }
-
-  function drawPlayer() {
-    const x = wx(player.x), y = wy(player.y), w = ws(player.w), h = ws(player.h);
-    const bob = player.onGround ? Math.sin(player.anim)*ws(2) : 0;
-    ctx.save();
-    ctx.translate(x + w/2, y + h/2 + bob);
-    ctx.scale(player.face, 1);
-    // body
-    ctx.fillStyle = "#27e1c1"; ctx.shadowColor="rgba(39,225,193,.9)"; ctx.shadowBlur=20;
-    roundRect(-w/2, -h/2, w, h, ws(12)); ctx.fill();
-    ctx.shadowBlur = 0;
-    // visor
-    ctx.fillStyle = "#04121a";
-    roundRect(w*0.02, -h*0.28, w*0.34, h*0.22, ws(6)); ctx.fill();
-    // eye glow
-    ctx.fillStyle = "#ff5d8f";
-    ctx.beginPath(); ctx.arc(w*0.2, -h*0.17, ws(4), 0, 6.283); ctx.fill();
-    ctx.restore();
+}
+function pEnd(id) {
+  if (id === moveId) {
+    // quick press without real drag = jump
+    if (performance.now() - moveStart < 260 && moveMaxD < 16) jumpQueued = true;
+    moveId = null; move.x = 0; move.y = 0; knobEl.style.transform = "translate(0,0)";
   }
+  if (id === lookId) lookId = null;
+}
 
-  function roundRect(x,y,w,h,r){
-    r = Math.min(r, w/2, h/2);
-    ctx.beginPath();
-    ctx.moveTo(x+r,y);
-    ctx.arcTo(x+w,y,x+w,y+h,r);
-    ctx.arcTo(x+w,y+h,x,y+h,r);
-    ctx.arcTo(x,y+h,x,y,r);
-    ctx.arcTo(x,y,x+w,y,r);
-    ctx.closePath();
+canvas.addEventListener("touchstart", e => { e.preventDefault();
+  for (const t of e.changedTouches) pStart(t.identifier, t.clientX, t.clientY); }, { passive:false });
+canvas.addEventListener("touchmove", e => { e.preventDefault();
+  for (const t of e.changedTouches) pMove(t.identifier, t.clientX, t.clientY); }, { passive:false });
+canvas.addEventListener("touchend", e => {
+  for (const t of e.changedTouches) pEnd(t.identifier); }, { passive:false });
+canvas.addEventListener("touchcancel", e => {
+  for (const t of e.changedTouches) pEnd(t.identifier); }, { passive:false });
+
+// mouse fallback (desktop)
+let mdown = false;
+canvas.addEventListener("mousedown", e => { mdown = true; pStart("m", e.clientX, e.clientY); });
+canvas.addEventListener("mousemove", e => { if (mdown) pMove("m", e.clientX, e.clientY); });
+window.addEventListener("mouseup", () => { mdown = false; pEnd("m"); });
+
+window.addEventListener("keydown", e => {
+  keys[e.code] = true;
+  if (e.code === "Space") { jumpQueued = true; e.preventDefault(); }
+});
+window.addEventListener("keyup", e => { keys[e.code] = false; });
+
+// ---------- start ----------
+function startGame() {
+  if (started) { // restart from win screen
+    orbs.forEach(o => { o.got = false; o.mesh.visible = true; });
+    updateOrbHud(); respawn();
+    winScreen.classList.add("hidden");
+    return;
   }
+  started = true;
+  startScreen.classList.add("hidden");
+  winScreen.classList.add("hidden");
+  hud.style.opacity = "1";
+  stickEl.style.opacity = "1";
+}
+document.getElementById("startBtn").addEventListener("click", startGame);
+document.getElementById("againBtn").addEventListener("click", startGame);
 
-  function loop(){ update(); render(); requestAnimationFrame(loop); }
-  reset(); loop();
-})();
+// boot
+try {
+  initThree();
+  loop();
+} catch (err) {
+  errEl.textContent = "3D failed to load: " + (err && err.message ? err.message : err) +
+    " — check your connection (the 3D engine loads from a CDN).";
+  console.error(err);
+}
 </script>
 </body>
 </html>
