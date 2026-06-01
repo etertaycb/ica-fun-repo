@@ -96,7 +96,7 @@ let started = false;
 
 // ---- tunables ----
 const GRAVITY   = 9.0;    // micro gravity (low -> floaty)
-const JUMP_VEL  = 17.0;   // huge jump
+const JUMP_VEL  = 11.0;   // smaller hop
 const MOVE_SPEED= 11.0;
 const AIR_CTRL  = 0.7;
 const PLAYER_R  = 0.55;   // small player
@@ -454,14 +454,80 @@ function buildWorld() {
   updateOrbHud();
 }
 
+// Build a little goblin out of primitives. Body spans roughly y in
+// [-0.55, +0.55] so it matches the PLAYER_R collision sphere.
 function buildPlayer() {
-  const g = new THREE.SphereGeometry(PLAYER_R, 24, 16);
-  const m = new THREE.Mesh(g, mat(0x27e1c1, 0x27e1c1, 1.1, 0.25));
-  scene.add(m);
-  // a soft point light so the player glows on surfaces
-  const pl = new THREE.PointLight(0x27e1c1, 0.8, 12);
-  m.add(pl);
-  player.mesh = m;
+  const G = new THREE.Group();
+  scene.add(G);
+  player.mesh = G;
+  player.face = 0;          // current facing yaw (radians)
+
+  const skin   = new THREE.MeshStandardMaterial({ color:0x6aa84f, roughness:0.85 });
+  const skinDk = new THREE.MeshStandardMaterial({ color:0x4e7d39, roughness:0.85 });
+  const cloth  = new THREE.MeshStandardMaterial({ color:0x7a4a24, roughness:0.95 });
+  const eyeMat = new THREE.MeshStandardMaterial({ color:0xffe14d, emissive:0x6b5600, emissiveIntensity:0.5, roughness:0.4 });
+  const black  = new THREE.MeshStandardMaterial({ color:0x141414, roughness:0.5 });
+  const tooth  = new THREE.MeshStandardMaterial({ color:0xf7f0d8, roughness:0.6 });
+
+  const box  = (w,h,d,m) => new THREE.Mesh(new THREE.BoxGeometry(w,h,d), m);
+  const sph  = (r,m)     => new THREE.Mesh(new THREE.SphereGeometry(r,16,12), m);
+  const cone = (r,h,m)   => new THREE.Mesh(new THREE.ConeGeometry(r,h,10), m);
+
+  // torso + belt
+  const torso = box(0.46,0.5,0.34, skin); torso.position.y = -0.04;
+  const belt  = box(0.5,0.16,0.38, cloth); belt.position.y = -0.2;
+  G.add(torso, belt);
+
+  // ---- head (bobs / tilts) ----
+  const head = new THREE.Group(); head.position.y = 0.33; G.add(head);
+  const skull = sph(0.26, skin); skull.scale.set(1.0,0.92,0.96); head.add(skull);
+  const brow  = box(0.34,0.05,0.06, skinDk); brow.position.set(0,0.13,0.2); head.add(brow);
+  const nose  = cone(0.085,0.28, skin); nose.rotation.x = Math.PI*0.5; nose.position.set(0,-0.01,0.28); head.add(nose);
+  const eL = sph(0.06, eyeMat), eR = sph(0.06, eyeMat);
+  eL.position.set(-0.1,0.06,0.2); eR.position.set(0.1,0.06,0.2); head.add(eL,eR);
+  const pL = sph(0.025, black), pR = sph(0.025, black);
+  pL.position.set(-0.1,0.06,0.255); pR.position.set(0.1,0.06,0.255); head.add(pL,pR);
+  const tL = cone(0.028,0.09, tooth), tR = cone(0.028,0.09, tooth);
+  tL.position.set(-0.05,-0.17,0.22); tR.position.set(0.05,-0.17,0.22); head.add(tL,tR);
+
+  // ---- big pointy ears (jiggle) ----
+  function makeEar(side) {
+    const pivot = new THREE.Group();
+    pivot.position.set(0.22*side, 0.05, -0.02);
+    const ear = cone(0.09,0.36, skin);
+    ear.rotation.z = side > 0 ? -(Math.PI*0.5 + 0.4) : (Math.PI*0.5 + 0.4);
+    ear.position.x = 0.17*side;
+    pivot.add(ear);
+    head.add(pivot);
+    return pivot;
+  }
+  const earL = makeEar(-1), earR = makeEar(1);
+
+  // ---- arms (swing) ----
+  function makeArm(side) {
+    const pivot = new THREE.Group();
+    pivot.position.set(0.27*side, 0.16, 0);
+    const upper = box(0.12,0.34,0.12, skin); upper.position.y = -0.17;
+    const hand  = sph(0.085, skinDk);        hand.position.y = -0.37;
+    pivot.add(upper, hand);
+    G.add(pivot);
+    return pivot;
+  }
+  const armL = makeArm(-1), armR = makeArm(1);
+
+  // ---- legs (swing) ----
+  function makeLeg(side) {
+    const pivot = new THREE.Group();
+    pivot.position.set(0.12*side, -0.24, 0);
+    const leg  = box(0.15,0.3,0.16, skinDk); leg.position.y = -0.15;
+    const foot = box(0.18,0.1,0.26, skinDk); foot.position.set(0,-0.3,0.05);
+    pivot.add(leg, foot);
+    G.add(pivot);
+    return pivot;
+  }
+  const legL = makeLeg(-1), legR = makeLeg(1);
+
+  player.goblin = { head, earL, earR, armL, armR, legL, legR, walk: 0 };
 
   // blob shadow
   const ring = new THREE.Mesh(
@@ -473,6 +539,50 @@ function buildPlayer() {
   player.shadow = ring;
 
   respawn();
+}
+
+// angle lerp (shortest path)
+function lerpAngle(a, b, t) {
+  let d = ((b - a + Math.PI) % (Math.PI*2)) - Math.PI;
+  if (d < -Math.PI) d += Math.PI*2;
+  return a + d * t;
+}
+
+// Pose + animate the goblin from movement state.
+function animateGoblin(dt, speed) {
+  const gb = player.goblin;
+  if (!gb) return;
+  const t = clock.elapsedTime;
+  const amp = Math.min(1, speed / MOVE_SPEED);
+  const k = Math.min(1, dt * 12);   // smoothing factor
+
+  let legLx, legRx, armLx, armRx, headY, headZ;
+  if (player.grounded) {
+    gb.walk += dt * (4 + speed * 1.1);
+    const swing = Math.sin(gb.walk) * 0.9 * amp;
+    legLx =  swing;       legRx = -swing;
+    armLx = -swing * 0.8; armRx =  swing * 0.8;
+    headY = 0.33 + Math.sin(t * 2) * 0.025 * (1 - amp);   // idle breathing
+    headZ = Math.sin(gb.walk) * 0.05 * amp;
+  } else {
+    // airborne tuck: legs up, arms raised
+    const up = player.vel.y > 0 ? 1 : 0.6;
+    legLx = -0.9 * up; legRx = -0.5 * up;
+    armLx = -2.2;      armRx = -2.2;
+    headY = 0.33;      headZ = 0;
+  }
+
+  gb.legL.rotation.x = lerpAngle(gb.legL.rotation.x, legLx, k);
+  gb.legR.rotation.x = lerpAngle(gb.legR.rotation.x, legRx, k);
+  gb.armL.rotation.x = lerpAngle(gb.armL.rotation.x, armLx, k);
+  gb.armR.rotation.x = lerpAngle(gb.armR.rotation.x, armRx, k);
+  gb.head.position.y += (headY - gb.head.position.y) * k;
+  gb.head.rotation.z  = lerpAngle(gb.head.rotation.z, headZ, k);
+
+  // ears jiggle constantly, more when moving/airborne
+  const jig = 0.12 * (0.4 + amp) + (player.grounded ? 0 : 0.12);
+  gb.earL.rotation.x = Math.sin(t * 5)     * jig;
+  gb.earR.rotation.x = Math.sin(t * 5 + 1) * jig;
 }
 
 function respawn() {
@@ -563,8 +673,17 @@ function update(dt) {
   // keep the grass-card LOD field centred on the player
   recenterGrass();
 
-  // mesh + shadow
+  // mesh + facing + animation
   player.mesh.position.copy(player.pos);
+  const speedXZ = Math.hypot(player.vel.x, player.vel.z);
+  if (speedXZ > 0.4) {
+    const targetYaw = Math.atan2(player.vel.x, player.vel.z);   // model faces +Z
+    player.face = lerpAngle(player.face, targetYaw, Math.min(1, dt * 10));
+  }
+  player.mesh.rotation.y = player.face;
+  animateGoblin(dt, speedXZ);
+
+  // shadow
   player.shadow.position.set(player.pos.x, 0.03, player.pos.z);
   const fade = Math.max(0, 1 - player.pos.y / 60);
   player.shadow.material.opacity = 0.35 * fade;
