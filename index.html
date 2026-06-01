@@ -44,6 +44,26 @@
   .btn:active { transform:scale(.95); }
   .pill { display:inline-block; padding:4px 14px; border-radius:999px; border:1px solid rgba(255,255,255,.18); font-size:13px; opacity:.8; }
   #err { font-size:13px; color:#ff9bb4; max-width:320px; }
+
+  /* interaction prompt */
+  #prompt { position:fixed; left:0; right:0; z-index:7;
+    bottom:calc(env(safe-area-inset-bottom,20px) + 170px); text-align:center;
+    font-size:15px; font-weight:700; color:#fff; opacity:0; transition:opacity .18s;
+    text-shadow:0 2px 8px rgba(0,0,0,.85); pointer-events:none; }
+  #prompt.show { opacity:1; }
+
+  /* dialogue box */
+  #dialog { position:fixed; left:16px; right:16px; z-index:30; display:none;
+    bottom:calc(env(safe-area-inset-bottom,20px) + 22px);
+    background:rgba(12,16,26,.93); border:1px solid rgba(255,255,255,.18);
+    border-radius:16px; padding:15px 18px; box-shadow:0 12px 44px rgba(0,0,0,.55); }
+  #dialog .who { font-size:13px; font-weight:800; letter-spacing:1px; color:#9be38f; margin-bottom:6px; }
+  #dialog .txt { font-size:16px; line-height:1.5; }
+  #dialog .more { margin-top:8px; font-size:12px; opacity:.6; text-align:right; }
+
+  /* Looney-Tunes iris wipe */
+  #iris { position:fixed; inset:0; z-index:60; display:none; pointer-events:none; --r:2000px;
+    background:radial-gradient(circle at 50% 55%, rgba(0,0,0,0) calc(var(--r) - 2px), #000 var(--r)); }
 </style>
 </head>
 <body>
@@ -56,13 +76,17 @@
 
 <div id="stick"><div id="knob"></div><div class="lbl">MOVE</div></div>
 
+<div id="prompt"></div>
+<div id="dialog"><div class="who"></div><div class="txt"></div><div class="more">tap to continue ▸</div></div>
+<div id="iris"></div>
+
 <div class="overlay" id="startScreen">
   <span class="pill">fantasy 3d world</span>
   <h1 class="title">AETHER<br>ISLES</h1>
-  <p class="sub">A floating fairy-tale meadow. Drift on the wind, leap between sky islands, and gather every fae light.</p>
+  <p class="sub">Explore a sunlit meadow of hills, rocks and trees — then step into the cave and meet what waits in the dark.</p>
   <div class="legend">
     Bottom-left stick → drag to move<br>
-    Tap anywhere → big floaty jump<br>
+    Tap anywhere → jump &nbsp;(or talk / continue when prompted)<br>
     Drag (off the stick) → look / turn the camera
   </div>
   <button class="btn" id="startBtn">ENTER</button>
@@ -114,6 +138,20 @@ const player = {
 let yaw = 0, pitch = 0.5;   // camera orbit
 const camDist = 9;
 
+// ---- level / RPG systems ----
+let worldRoot = null, skyMesh = null, groundMesh = null;
+let sunLight = null, hemiLight = null, ambLight = null;
+let grassTexCache = null, rockTexCache = null;
+let level = 1, transitioning = false;
+let interactables = [], currentInteract = null, caveTrigger = null;
+let torches = [], spiderRig = null;
+let spawnFace = 0;
+const spawnPoint = new THREE.Vector3(0, 6, 24);
+const dialogState = { open:false, lines:[], idx:0 };
+const promptEl = document.getElementById("prompt");
+const dialogEl = document.getElementById("dialog");
+const irisEl   = document.getElementById("iris");
+
 // ---- input ----
 const move = { x: 0, y: 0 };      // -1..1 joystick
 let moveId = null, moveCX = 0, moveCY = 0;   // stick center (fixed)
@@ -135,19 +173,22 @@ function initThree() {
 
   camera = new THREE.PerspectiveCamera(62, window.innerWidth/window.innerHeight, 0.1, 2000);
 
-  // daytime lighting
-  const hemi = new THREE.HemisphereLight(0xbfe3ff, 0x4a7a3a, 0.95); // sky tint / grass bounce
-  scene.add(hemi);
-  const sun = new THREE.DirectionalLight(0xfff4e0, 1.35);
-  sun.position.set(60, 110, 40);
-  scene.add(sun);
-  const ambient = new THREE.AmbientLight(0xffffff, 0.18);
-  scene.add(ambient);
+  // lighting (tuned per-level in loadLevel)
+  hemiLight = new THREE.HemisphereLight(0xbfe3ff, 0x4a7a3a, 0.95);
+  scene.add(hemiLight);
+  sunLight = new THREE.DirectionalLight(0xfff4e0, 1.35);
+  sunLight.position.set(60, 110, 40);
+  scene.add(sunLight);
+  ambLight = new THREE.AmbientLight(0xffffff, 0.18);
+  scene.add(ambLight);
 
   clock = new THREE.Clock();
   buildSky();
-  buildWorld();
+  buildGround();
   buildPlayer();
+  worldRoot = new THREE.Group();
+  scene.add(worldRoot);
+  loadLevel(1);
 
   window.addEventListener("resize", onResize);
 }
@@ -223,7 +264,8 @@ function buildSky() {
   const m = new THREE.MeshBasicMaterial({
     map: tex, side: THREE.BackSide, fog: false, depthWrite: false,
   });
-  scene.add(new THREE.Mesh(geo, m));
+  skyMesh = new THREE.Mesh(geo, m);
+  scene.add(skyMesh);
 }
 
 // ---------- procedural low-res grass ground texture (tiles) ----------
@@ -322,7 +364,7 @@ function ghash(x, z) { const n = Math.sin(x*127.1 + z*311.7) * 43758.5453; retur
 // Recenter the finite grass field on the player so grass always surrounds them;
 // per-instance height/width fade to 0 at the radius edge = distance-based LOD.
 function recenterGrass() {
-  if (!grassMesh) return;
+  if (!grassMesh || !grassMesh.visible) return;
   const s = GRASS_SPACING;
   const cx = Math.round(player.pos.x/s), cz = Math.round(player.pos.z/s);
   if (cx === grassLastCX && cz === grassLastCZ) return;
@@ -351,12 +393,12 @@ function recenterGrass() {
 const mat = (color, emissive=0x000000, ei=0.0, rough=0.6) =>
   new THREE.MeshStandardMaterial({ color, emissive, emissiveIntensity:ei, roughness:rough, metalness:0.1 });
 
-function addBox(cx, cy, cz, w, h, d, material) {
+function addBox(cx, cy, cz, w, h, d, material, collide = true) {
   const geo = new THREE.BoxGeometry(w, h, d);
   const m = new THREE.Mesh(geo, material);
   m.position.set(cx, cy, cz);
-  scene.add(m);
-  colliders.push({
+  (worldRoot || scene).add(m);
+  if (collide) colliders.push({
     min: new THREE.Vector3(cx - w/2, cy - h/2, cz - d/2),
     max: new THREE.Vector3(cx + w/2, cy + h/2, cz + d/2),
   });
@@ -373,85 +415,312 @@ function addOrb(x, y, z) {
   orbs.push({ mesh: m, pos: new THREE.Vector3(x,y,z), got:false, t: Math.random()*6.28 });
 }
 
-function buildWorld() {
-  // ---- large grass ground plane (procedural low-res tiling texture) ----
-  const groundTex = makeGrassGroundTexture();
-  groundTex.wrapS = groundTex.wrapT = THREE.RepeatWrapping;
-  groundTex.repeat.set(450, 450);                 // tile ~every 4 units
-  groundTex.magFilter = THREE.NearestFilter;      // crisp low-res look
-  groundTex.colorSpace = THREE.SRGBColorSpace;
-  const ground = new THREE.Mesh(
+// ---------- persistent ground (texture swapped per level) ----------
+function makeRockGroundTexture() {
+  const S = 32;
+  const cv = document.createElement("canvas"); cv.width = cv.height = S;
+  const g = cv.getContext("2d");
+  g.fillStyle = "#3b3742"; g.fillRect(0, 0, S, S);
+  for (let i = 0; i < 1100; i++) {
+    const x = (Math.random()*S)|0, y = (Math.random()*S)|0, v = Math.random();
+    g.fillStyle = v < 0.4 ? "#332f3a" : v < 0.75 ? "#45414e" : "#2c2933";
+    g.fillRect(x, y, 1, 1);
+  }
+  return new THREE.CanvasTexture(cv);
+}
+
+function buildGround() {
+  grassTexCache = makeGrassGroundTexture();
+  grassTexCache.wrapS = grassTexCache.wrapT = THREE.RepeatWrapping;
+  grassTexCache.repeat.set(450, 450);
+  grassTexCache.magFilter = THREE.NearestFilter;
+  grassTexCache.colorSpace = THREE.SRGBColorSpace;
+
+  rockTexCache = makeRockGroundTexture();
+  rockTexCache.wrapS = rockTexCache.wrapT = THREE.RepeatWrapping;
+  rockTexCache.repeat.set(360, 360);
+  rockTexCache.magFilter = THREE.NearestFilter;
+  rockTexCache.colorSpace = THREE.SRGBColorSpace;
+
+  groundMesh = new THREE.Mesh(
     new THREE.PlaneGeometry(1800, 1800),
-    new THREE.MeshStandardMaterial({ map: groundTex, roughness: 1, metalness: 0 })
+    new THREE.MeshStandardMaterial({ map: grassTexCache, roughness: 1, metalness: 0 })
   );
-  ground.rotation.x = -Math.PI / 2;
-  scene.add(ground);
-  buildGrass();                                   // distance-based grass-card LOD field
+  groundMesh.rotation.x = -Math.PI / 2;
+  scene.add(groundMesh);
+  buildGrass();
+}
 
-  // fantasy stone palette
-  const teal = mat(0x9aa0ad, 0x000000, 0, 0.9);   // light stone
-  const deep = mat(0x7d8390, 0x000000, 0, 0.92);  // mid stone
-  const rose = mat(0xb5876b, 0x000000, 0, 0.9);   // warm sandstone
+// ---------- nature props (all parented to worldRoot) ----------
+function addHill(x, z, r, h) {
+  const m = new THREE.Mesh(
+    new THREE.SphereGeometry(1, 12, 8),
+    new THREE.MeshStandardMaterial({ color: 0x57883a, roughness: 1, flatShading: true })
+  );
+  m.position.set(x, 0, z); m.scale.set(r, h, r);
+  worldRoot.add(m);
+}
+function addTree(x, z, s) {
+  const g = new THREE.Group(); g.position.set(x, 0, z);
+  const trunk = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.18*s, 0.28*s, 1.6*s, 7),
+    new THREE.MeshStandardMaterial({ color: 0x6b4a2b, roughness: 1 })
+  );
+  trunk.position.y = 0.8*s; g.add(trunk);
+  const folMat = new THREE.MeshStandardMaterial({ color: 0x3f8f3a, roughness: 1, flatShading: true });
+  for (let i = 0; i < 3; i++) {
+    const c = new THREE.Mesh(new THREE.ConeGeometry((1.15 - i*0.28)*s, 1.2*s, 8), folMat);
+    c.position.y = (1.5 + i*0.7)*s; g.add(c);
+  }
+  g.rotation.y = Math.random()*6.28;
+  worldRoot.add(g);
+  colliders.push({ min:new THREE.Vector3(x-0.32*s,0,z-0.32*s), max:new THREE.Vector3(x+0.32*s,2*s,z+0.32*s) });
+}
+function addRock(x, z, s) {
+  const m = new THREE.Mesh(
+    new THREE.DodecahedronGeometry(s, 0),
+    new THREE.MeshStandardMaterial({ color: 0x8a8a92, roughness: 1, flatShading: true })
+  );
+  m.position.set(x, s*0.55, z);
+  m.rotation.set(Math.random()*3, Math.random()*3, Math.random()*3);
+  worldRoot.add(m);
+  const c = s*0.9;
+  colliders.push({ min:new THREE.Vector3(x-c,0,z-c), max:new THREE.Vector3(x+c,s*1.3,z+c) });
+}
+function addTorch(x, y, z) {
+  const grp = new THREE.Group(); grp.position.set(x, y, z);
+  const flame = new THREE.Mesh(new THREE.SphereGeometry(0.22, 8, 6),
+    new THREE.MeshBasicMaterial({ color: 0xffb24d }));
+  grp.add(flame);
+  const light = new THREE.PointLight(0xffa64d, 1.4, 24, 2);
+  grp.add(light);
+  worldRoot.add(grp);
+  torches.push({ light, flame, base: 1.4, t: Math.random()*6 });
+}
 
-  // central plaza + glowing crystal monument
-  addBox(0, 1, 0, 44, 2, 44, deep);
-  addBox(0, 14, 0, 4, 24, 4, mat(0x7ff0dd, 0x39d6c0, 1.3, 0.2));
-  addOrb(0, 30, 0);
+// ---------- spider web texture + cards ----------
+function makeWebTexture() {
+  const S = 256;
+  const cv = document.createElement("canvas"); cv.width = cv.height = S;
+  const g = cv.getContext("2d");
+  g.clearRect(0, 0, S, S);
+  g.strokeStyle = "rgba(232,238,244,0.92)"; g.lineWidth = 1.4;
+  const cx = S/2, cy = S/2, R = S*0.48, spokes = 12;
+  for (let i = 0; i < spokes; i++) {
+    const a = i/spokes*6.283;
+    g.beginPath(); g.moveTo(cx, cy); g.lineTo(cx+Math.cos(a)*R, cy+Math.sin(a)*R); g.stroke();
+  }
+  for (let ring = 1; ring <= 7; ring++) {
+    const rr = R*ring/7;
+    g.beginPath();
+    for (let i = 0; i <= spokes; i++) {
+      const a = i/spokes*6.283, px = cx+Math.cos(a)*rr, py = cy+Math.sin(a)*rr;
+      i === 0 ? g.moveTo(px, py) : g.lineTo(px, py);
+    }
+    g.stroke();
+  }
+  const tex = new THREE.CanvasTexture(cv);
+  return tex;
+}
+function addWeb(x, y, z, size, tex, rotY = 0) {
+  const m = new THREE.Mesh(
+    new THREE.PlaneGeometry(size, size),
+    new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: 0.4, depthWrite: false, side: THREE.DoubleSide })
+  );
+  m.position.set(x, y, z); m.rotation.y = rotY;
+  worldRoot.add(m);
+}
 
-  // ring of 12 pillars
-  for (let i = 0; i < 12; i++) {
-    const a = (i/12) * Math.PI * 2;
-    const r = 40;
-    const x = Math.cos(a)*r, z = Math.sin(a)*r;
-    const ph = 8 + (i % 3) * 5;
-    addBox(x, ph/2 + 2, z, 5, ph, 5, i % 2 ? teal : rose);
-    if (i % 2 === 0) addOrb(x, ph + 4, z);
+// ---------- giant spider ----------
+function buildSpider(x, z) {
+  const g = new THREE.Group(); g.position.set(x, 0, z);
+  const bodyMat = new THREE.MeshStandardMaterial({ color: 0x241f2b, roughness: 0.8, flatShading: true });
+  const jointMat = new THREE.MeshStandardMaterial({ color: 0x140f18, roughness: 0.85 });
+  const eyeMat = new THREE.MeshStandardMaterial({ color: 0xff3b3b, emissive: 0xff1a1a, emissiveIntensity: 1.3 });
+
+  const abd = new THREE.Mesh(new THREE.SphereGeometry(2.2, 16, 12), bodyMat);
+  abd.position.set(0, 2.5, 1.9); abd.scale.set(1, 0.9, 1.15); g.add(abd);
+  const ceph = new THREE.Mesh(new THREE.SphereGeometry(1.3, 14, 12), bodyMat);
+  ceph.position.set(0, 2.0, -1.0); g.add(ceph);
+
+  for (const [ex, ey] of [[-0.5,0.45],[0.5,0.45],[-0.24,0.12],[0.24,0.12],[-0.72,0.02],[0.72,0.02]]) {
+    const e = new THREE.Mesh(new THREE.SphereGeometry(0.13, 8, 6), eyeMat);
+    e.position.set(ex, 2.0 + ey, -2.05); g.add(e);
+  }
+  for (const sx of [-0.34, 0.34]) {
+    const f = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.6, 6), jointMat);
+    f.position.set(sx, 1.35, -2.0); f.rotation.x = Math.PI; g.add(f);
   }
 
-  // four staircases climbing outward (N,S,E,W)
-  const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
-  for (const [dx, dz] of dirs) {
-    for (let s = 0; s < 7; s++) {
-      const dist = 60 + s*9;
-      const y = 2 + s*3;
-      addBox(dx*dist, y, dz*dist, 14, 2, 14, deep);
-      if (s === 6) addOrb(dx*dist, y + 3, dz*dist);
+  const legs = [];
+  for (const side of [-1, 1]) {
+    for (let i = 0; i < 4; i++) {
+      const lp = new THREE.Group();
+      lp.position.set(side*0.9, 2.3, -0.7 + i*0.95);
+      const thigh = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 2.1, 6), jointMat);
+      thigh.position.set(side*1.0, 0.05, 0); thigh.rotation.z = side*Math.PI/2.6; lp.add(thigh);
+      const shin = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.07, 2.3, 6), jointMat);
+      shin.position.set(side*1.95, -1.0, 0); shin.rotation.z = side*0.55; lp.add(shin);
+      g.add(lp);
+      legs.push({ grp: lp, phase: i*0.7 + (side > 0 ? 0.35 : 0) });
     }
   }
+  worldRoot.add(g);
+  spiderRig = { group: g, legs, t: 0 };
+}
 
-  // floating islands (authored)
-  const islands = [
-    [ 90, 22,  90, 18, 4, 18],
-    [-95, 30, 70, 16, 4, 16],
-    [ 70, 40, -100, 20, 4, 20],
-    [-110, 18, -90, 22, 4, 22],
-    [ 130, 52, 10, 16, 4, 16],
-    [ 10, 60, 140, 18, 4, 18],
-    [-140, 46, -20, 16, 4, 16],
-    [ 0, 75, -160, 24, 4, 24],
-  ];
-  for (const [x,y,z,w,h,d] of islands) {
-    addBox(x, y, z, w, h, d, mat(0x6b9b4a, 0x000000, 0, 0.95));  // mossy floating earth
-    addOrb(x, y + 4, z);
-    // a glowing beacon spire on each
-    addBox(x, y + 6, z, 1.6, 8, 1.6, mat(0xffb347, 0xff7a18, 1.2, 0.4));
+function addExitGlow(x, z) {
+  const ring = new THREE.Mesh(
+    new THREE.TorusGeometry(1.2, 0.18, 8, 22),
+    new THREE.MeshStandardMaterial({ color: 0xffe08a, emissive: 0xffcf5a, emissiveIntensity: 1.5 })
+  );
+  ring.position.set(x, 1.7, z); ring.rotation.x = Math.PI/2;
+  worldRoot.add(ring);
+  const l = new THREE.PointLight(0xffd277, 1.1, 16);
+  l.position.set(x, 2, z); worldRoot.add(l);
+}
+
+function buildCaveEntrance(x, z) {
+  const mound = new THREE.Mesh(
+    new THREE.SphereGeometry(1, 14, 10),
+    new THREE.MeshStandardMaterial({ color: 0x5b6450, roughness: 1, flatShading: true })
+  );
+  mound.position.set(x, 0, z); mound.scale.set(16, 15, 14);
+  worldRoot.add(mound);
+  // dark opening
+  addBox(x, 2.6, z - 9, 7, 8, 6, new THREE.MeshBasicMaterial({ color: 0x000000 }), false);
+  // framing rocks
+  addRock(x - 4.8, z - 9.5, 2.7); addRock(x + 4.8, z - 9.5, 2.7);
+  addRock(x - 7.5, z - 5, 2.3);   addRock(x + 7.5, z - 5, 2.3);
+  // walk-in trigger at the mouth
+  caveTrigger = { pos: new THREE.Vector3(x, 1.5, z - 11), radius: 4.2 };
+}
+
+// ---------- level management ----------
+function disposeDeep(o) {
+  o.traverse(n => {
+    if (n.geometry) n.geometry.dispose();
+    if (n.material) {
+      const ms = Array.isArray(n.material) ? n.material : [n.material];
+      for (const m of ms) { if (m.map && m.map !== grassTexCache && m.map !== rockTexCache) m.map.dispose(); m.dispose && m.dispose(); }
+    }
+  });
+}
+function clearWorld() {
+  for (let i = worldRoot.children.length - 1; i >= 0; i--) {
+    const c = worldRoot.children[i]; worldRoot.remove(c); disposeDeep(c);
   }
+  colliders.length = 0;
+  interactables = []; currentInteract = null; caveTrigger = null;
+  torches = []; spiderRig = null;
+  hidePrompt();
+}
+function setSpawn(x, y, z, face) {
+  spawnPoint.set(x, y, z); spawnFace = face; respawn();
+}
+function hudTitle(name, hint) {
+  orbHud.textContent = name;
+  const h = document.querySelector("#hud .hint"); if (h) h.textContent = hint || "";
+}
 
-  // a big arch / gateway to the south
-  addBox(-12, 16, 110, 4, 32, 6, teal);
-  addBox( 12, 16, 110, 4, 32, 6, teal);
-  addBox(  0, 33, 110, 32, 4, 6, teal);
-  addOrb(0, 40, 110);
+function loadLevel(n) {
+  level = n;
+  clearWorld();
+  if (n === 1) buildMeadow(); else buildCave();
+}
 
-  // far stepping-stones leading way out (sense of scale)
-  for (let i = 0; i < 6; i++) {
-    const x = 60 + i*30, y = 8 + Math.sin(i)*6, z = -60 - i*28;
-    addBox(x, y, z, 10, 3, 10, mat(0x7d8a5a, 0x000000, 0, 0.95));  // mossy stepping stone
-    if (i % 2) addOrb(x, y + 3, z);
+function buildMeadow() {
+  skyMesh.visible = true;
+  grassMesh.visible = true;
+  groundMesh.material.map = grassTexCache; groundMesh.material.needsUpdate = true;
+  scene.background.set(0x9ec9f2);
+  scene.fog.color.set(0xcfe2f5); scene.fog.near = 110; scene.fog.far = 420;
+  hemiLight.color.set(0xbfe3ff); hemiLight.groundColor.set(0x4a7a3a); hemiLight.intensity = 0.95;
+  sunLight.color.set(0xfff4e0); sunLight.intensity = 1.35; sunLight.position.set(60, 110, 40);
+  ambLight.intensity = 0.18;
+
+  // backdrop ring of hills
+  for (let i = 0; i < 14; i++) {
+    const a = i/14*Math.PI*2 + 0.2, r = 150 + Math.random()*45;
+    addHill(Math.cos(a)*r, Math.sin(a)*r, 38 + Math.random()*40, 16 + Math.random()*16);
   }
+  // scattered trees + rocks (keep the path to the cave at +Z clear)
+  for (let i = 0; i < 28; i++) {
+    const a = Math.random()*6.283, r = 16 + Math.random()*72;
+    const x = Math.cos(a)*r, z = Math.sin(a)*r;
+    if (Math.abs(x) < 7 && z > 8 && z < 56) continue;       // clear corridor to cave
+    if (Math.random() < 0.5) addTree(x, z, 0.8 + Math.random()*0.8);
+    else addRock(x, z, 0.7 + Math.random()*1.5);
+  }
+  addRock(-15, 30, 2.6); addRock(17, 16, 2.2);              // a couple of hero boulders
 
-  orbCount = orbs.length;
-  updateOrbHud();
+  buildCaveEntrance(0, 50);
+
+  setSpawn(0, 6, 24, 0);
+  yaw = Math.PI; pitch = 0.5;
+  hudTitle("The Meadow", "Walk into the cave ahead ▸");
+}
+
+function buildCave() {
+  skyMesh.visible = false;
+  grassMesh.visible = false;
+  groundMesh.material.map = rockTexCache; groundMesh.material.needsUpdate = true;
+  scene.background.set(0x06060a);
+  scene.fog.color.set(0x05050a); scene.fog.near = 4; scene.fog.far = 58;
+  hemiLight.color.set(0x42506e); hemiLight.groundColor.set(0x101018); hemiLight.intensity = 0.32;
+  sunLight.intensity = 0.12;
+  ambLight.intensity = 0.08;
+
+  const rockMat  = new THREE.MeshStandardMaterial({ color: 0x4a4753, roughness: 1, flatShading: true });
+  const rockMat2 = new THREE.MeshStandardMaterial({ color: 0x37343f, roughness: 1, flatShading: true });
+  const W = 5, segLen = 10, segs = 13;
+  for (let i = 0; i < segs; i++) {
+    const z = i*segLen;
+    addBox(-W - 2, 4.5, z, 4, 13, segLen + 0.4, rockMat);     // left wall
+    addBox( W + 2, 4.5, z, 4, 13, segLen + 0.4, rockMat);     // right wall
+    addBox(0, 11.5, z, (W + 4)*2, 3, segLen + 0.4, rockMat2, false); // ceiling
+    if (i % 2 === 0) { addRock(-W + 0.5, z + 3, 1 + Math.random()); addRock(W - 0.5, z + 6, 1 + Math.random()); }
+  }
+  // cap the far end behind the spider
+  addBox(0, 5, segs*segLen, (W + 4)*2, 14, 3, rockMat);
+
+  // torches along the walls
+  for (let i = 1; i < segs; i += 3) { addTorch(-W - 1.4, 4.5, i*segLen); addTorch(W + 1.4, 4.5, i*segLen); }
+
+  // spider webs strung across the tunnel + a few angled corner webs
+  const webTex = makeWebTexture();
+  for (let i = 2; i < segs - 1; i += 2) addWeb(0, 5, i*segLen, 9.5, webTex);
+  addWeb(-W, 5, 30, 6, webTex, Math.PI/2);
+  addWeb( W, 5, 70, 6, webTex, Math.PI/2);
+
+  // giant spider at the end (to talk to)
+  const endZ = (segs - 1)*segLen - 2;
+  buildSpider(0, endZ);
+  interactables.push({
+    type: "spider", pos: new THREE.Vector3(0, 1.5, endZ - 3.5), radius: 5.5,
+    label: "Tap to talk to the giant spider", action: talkSpider,
+  });
+
+  // exit back to the meadow near the entrance
+  addExitGlow(0, -2);
+  interactables.push({
+    type: "exit", pos: new THREE.Vector3(0, 1, -2), radius: 3.6,
+    label: "Tap to leave the cave", action: () => startTransition(1),
+  });
+
+  setSpawn(0, 2, 2, 0);
+  yaw = Math.PI; pitch = 0.42;
+  hudTitle("Deep Cave", "Something waits at the end…");
+}
+
+function talkSpider() {
+  openDialog("Giant Spider", [
+    "Ssso… a little goblin ssscuttles into my web.",
+    "Be still — I have not tasssted goblin in an age.",
+    "Few are brave enough to wander ssso deep beneath the meadow.",
+    "Bring me ssshiny trinkets from the sunlit world, and we ssshall be friendsss.",
+    "Now off you go, little one… before I change my mind.",
+  ]);
 }
 
 // Build a little goblin out of primitives. Body spans roughly y in
@@ -586,9 +855,66 @@ function animateGoblin(dt, speed) {
 }
 
 function respawn() {
-  player.pos.set(0, 6, 24);
-  player.vel.set(0,0,0);
+  player.pos.copy(spawnPoint);
+  player.vel.set(0, 0, 0);
   player.grounded = false;
+  player.face = spawnFace;
+  if (player.mesh) player.mesh.rotation.y = spawnFace;
+}
+
+// ---------- dialogue ----------
+function openDialog(who, lines) {
+  dialogState.open = true; dialogState.lines = lines; dialogState.idx = 0;
+  dialogEl.querySelector(".who").textContent = who;
+  renderDialog(); dialogEl.style.display = "block"; hidePrompt();
+}
+function renderDialog() {
+  dialogEl.querySelector(".txt").textContent = dialogState.lines[dialogState.idx];
+  dialogEl.querySelector(".more").textContent =
+    dialogState.idx < dialogState.lines.length - 1 ? "tap to continue ▸" : "tap to close ✕";
+}
+function advanceDialog() {
+  dialogState.idx++;
+  if (dialogState.idx >= dialogState.lines.length) closeDialog();
+  else renderDialog();
+}
+function closeDialog() { dialogState.open = false; dialogEl.style.display = "none"; }
+
+// ---------- interaction prompt ----------
+function showPrompt(t) { promptEl.textContent = t; promptEl.classList.add("show"); }
+function hidePrompt() { promptEl.classList.remove("show"); }
+
+// ---------- Looney-Tunes iris transition ----------
+function startTransition(toLevel) {
+  if (transitioning) return;
+  transitioning = true; hidePrompt(); closeDialog();
+  const maxR = Math.hypot(window.innerWidth, window.innerHeight) * 0.62;
+  const speed = maxR / 0.45;            // ~0.45s each way
+  let r = maxR, phase = "close", holdUntil = 0, last = performance.now();
+  irisEl.style.display = "block";
+  function frame(now) {
+    const dt = Math.min(0.05, (now - last) / 1000); last = now;
+    if (phase === "close") {
+      r -= speed * dt;
+      if (r <= 0) { r = 0; loadLevel(toLevel); phase = "hold"; holdUntil = now + 140; }
+    } else if (phase === "hold") {
+      if (now >= holdUntil) phase = "open";
+    } else {
+      r += speed * dt;
+      if (r >= maxR) { irisEl.style.display = "none"; transitioning = false; return; }
+    }
+    irisEl.style.setProperty("--r", r + "px");
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+}
+
+// ---------- unified tap handler (jump / talk / advance dialogue) ----------
+function handleTap() {
+  if (transitioning) return;
+  if (dialogState.open) { advanceDialog(); return; }
+  if (currentInteract) { currentInteract.action(); return; }
+  jumpQueued = true;
 }
 
 function updateOrbHud() {
@@ -638,8 +964,10 @@ function update(dt) {
   if (keys["KeyS"] || keys["ArrowDown"]) ky += 1;
   if (keys["KeyA"] || keys["ArrowLeft"]) kx -= 1;
   if (keys["KeyD"] || keys["ArrowRight"]) kx += 1;
-  const inX = moveId !== null ? move.x : kx;
-  const inY = moveId !== null ? move.y : ky;
+  const frozen = transitioning || dialogState.open;
+  if (frozen) jumpQueued = false;
+  const inX = frozen ? 0 : (moveId !== null ? move.x : kx);
+  const inY = frozen ? 0 : (moveId !== null ? move.y : ky);
 
   // camera-relative movement basis (XZ)
   camera.getWorldDirection(tmpF); tmpF.y = 0; tmpF.normalize();
@@ -687,6 +1015,31 @@ function update(dt) {
   player.shadow.position.set(player.pos.x, 0.03, player.pos.z);
   const fade = Math.max(0, 1 - player.pos.y / 60);
   player.shadow.material.opacity = 0.35 * fade;
+
+  // ---- RPG: triggers, interactions, ambient animation ----
+  if (level === 1 && caveTrigger && !transitioning) {
+    const d = Math.hypot(player.pos.x - caveTrigger.pos.x, player.pos.z - caveTrigger.pos.z);
+    if (d < caveTrigger.radius) startTransition(2);
+  }
+  currentInteract = null;
+  if (!transitioning && !dialogState.open) {
+    let best = Infinity;
+    for (const it of interactables) {
+      const d = Math.hypot(player.pos.x - it.pos.x, player.pos.z - it.pos.z);
+      if (d < it.radius && d < best) { best = d; currentInteract = it; }
+    }
+    if (currentInteract) showPrompt(currentInteract.label); else hidePrompt();
+  } else hidePrompt();
+
+  for (const to of torches) {
+    to.t += dt*10;
+    to.light.intensity = to.base * (0.82 + Math.sin(to.t)*0.12 + Math.random()*0.06);
+  }
+  if (spiderRig) {
+    spiderRig.t += dt;
+    for (const l of spiderRig.legs) l.grp.rotation.x = Math.sin(spiderRig.t*2 + l.phase) * 0.12;
+    spiderRig.group.position.y = Math.sin(spiderRig.t*1.5) * 0.08;
+  }
 
   // orbs
   for (const o of orbs) {
@@ -763,13 +1116,13 @@ function pMove(id, x, y) {
 }
 function pEnd(id) {
   if (id === moveId) {
-    // quick press on the stick without real drag = jump
-    if (performance.now() - moveStart < 260 && moveMaxD < 16) jumpQueued = true;
+    // quick press on the stick without real drag = tap action (jump/talk)
+    if (performance.now() - moveStart < 260 && moveMaxD < 16) handleTap();
     moveId = null; move.x = 0; move.y = 0; knobEl.style.transform = "translate(0,0)";
   }
   if (id === lookId) {
-    // quick tap anywhere (no real drag) = jump
-    if (performance.now() - lookStart < 260 && lookMaxD < 16) jumpQueued = true;
+    // quick tap anywhere (no real drag) = tap action (jump/talk)
+    if (performance.now() - lookStart < 260 && lookMaxD < 16) handleTap();
     lookId = null;
   }
 }
@@ -791,18 +1144,13 @@ window.addEventListener("mouseup", () => { mdown = false; pEnd("m"); });
 
 window.addEventListener("keydown", e => {
   keys[e.code] = true;
-  if (e.code === "Space") { jumpQueued = true; e.preventDefault(); }
+  if (e.code === "Space") { handleTap(); e.preventDefault(); }
 });
 window.addEventListener("keyup", e => { keys[e.code] = false; });
 
 // ---------- start ----------
 function startGame() {
-  if (started) { // restart from win screen
-    orbs.forEach(o => { o.got = false; o.mesh.visible = true; });
-    updateOrbHud(); respawn();
-    winScreen.classList.add("hidden");
-    return;
-  }
+  if (started) return;
   started = true;
   startScreen.classList.add("hidden");
   winScreen.classList.add("hidden");
