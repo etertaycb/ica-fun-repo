@@ -3,9 +3,9 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-<meta name="theme-color" content="#05060f" />
+<meta name="theme-color" content="#9ec9f2" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
-<title>Neon Drift — 3D Hub</title>
+<title>Aether Isles — 3D</title>
 <style>
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   html, body { margin:0; height:100%; overflow:hidden; background:#05060f;
@@ -57,9 +57,9 @@
 <div id="stick"><div id="knob"></div><div class="lbl">MOVE</div></div>
 
 <div class="overlay" id="startScreen">
-  <span class="pill">3d hub world</span>
-  <h1 class="title">NEON<br>DRIFT</h1>
-  <p class="sub">A low-gravity hub world. Float, leap between islands, and collect every orb.</p>
+  <span class="pill">fantasy 3d world</span>
+  <h1 class="title">AETHER<br>ISLES</h1>
+  <p class="sub">A floating fairy-tale meadow. Drift on the wind, leap between sky islands, and gather every fae light.</p>
   <div class="legend">
     Bottom-left stick → drag to move<br>
     Tap anywhere → big floaty jump<br>
@@ -70,7 +70,7 @@
 </div>
 
 <div class="overlay hidden" id="winScreen">
-  <h1 class="title">ALL ORBS!</h1>
+  <h1 class="title">ALL GATHERED!</h1>
   <p class="sub" id="winText"></p>
   <button class="btn" id="againBtn">EXPLORE AGAIN</button>
 </div>
@@ -130,20 +130,19 @@ function initThree() {
   renderer.setSize(window.innerWidth, window.innerHeight);
 
   scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x06070f);
-  scene.fog = new THREE.Fog(0x06070f, 60, 280);
+  scene.background = new THREE.Color(0x9ec9f2);          // daytime fallback
+  scene.fog = new THREE.Fog(0xcfe2f5, 110, 420);          // soft blue horizon haze
 
-  camera = new THREE.PerspectiveCamera(62, window.innerWidth/window.innerHeight, 0.1, 1000);
+  camera = new THREE.PerspectiveCamera(62, window.innerWidth/window.innerHeight, 0.1, 2000);
 
-  // lights
-  const hemi = new THREE.HemisphereLight(0x9fd8ff, 0x10122a, 0.9);
+  // daytime lighting
+  const hemi = new THREE.HemisphereLight(0xbfe3ff, 0x4a7a3a, 0.95); // sky tint / grass bounce
   scene.add(hemi);
-  const dir = new THREE.DirectionalLight(0xffffff, 1.1);
-  dir.position.set(40, 80, 30);
-  scene.add(dir);
-  const pink = new THREE.PointLight(0xff5d8f, 0.8, 200);
-  pink.position.set(0, 40, 0);
-  scene.add(pink);
+  const sun = new THREE.DirectionalLight(0xfff4e0, 1.35);
+  sun.position.set(60, 110, 40);
+  scene.add(sun);
+  const ambient = new THREE.AmbientLight(0xffffff, 0.18);
+  scene.add(ambient);
 
   clock = new THREE.Clock();
   buildSky();
@@ -159,75 +158,193 @@ function onResize() {
   camera.updateProjectionMatrix();
 }
 
-// ---------- procedural, seamlessly-tiling night-sky texture ----------
+// ---------- procedural daytime sky: vertical gradient + seamless clouds ----------
 function makeSkyTexture() {
-  const S = 512;
+  const W = 1024, H = 512;
   const cv = document.createElement("canvas");
-  cv.width = cv.height = S;
+  cv.width = W; cv.height = H;
   const g = cv.getContext("2d");
 
-  // base
-  g.fillStyle = "#05060f";
-  g.fillRect(0, 0, S, S);
+  // vertical sky gradient (canvas top = zenith, bottom = horizon)
+  const sky = g.createLinearGradient(0, 0, 0, H);
+  sky.addColorStop(0.00, "#2f6fd0");   // deep zenith blue
+  sky.addColorStop(0.45, "#5b9fe6");
+  sky.addColorStop(0.80, "#a9d2f5");
+  sky.addColorStop(1.00, "#dcecfb");   // pale horizon
+  g.fillStyle = sky;
+  g.fillRect(0, 0, W, H);
 
-  // draw a shape and its 8 neighbours so everything tiles with no seam
-  const wrapped = (fn) => {
-    for (let ix = -1; ix <= 1; ix++)
-      for (let iy = -1; iy <= 1; iy++) {
-        g.save(); g.translate(ix * S, iy * S); fn(); g.restore();
-      }
-  };
+  // draw a cloud and its horizontal neighbours so it tiles seamlessly in X
+  const wrapX = (fn) => { for (let ix = -1; ix <= 1; ix++) { g.save(); g.translate(ix*W, 0); fn(); g.restore(); } };
 
-  // soft nebula clouds
-  const neb = [[39,225,193],[255,93,143],[120,90,255]];
-  for (let i = 0; i < 11; i++) {
-    const x = Math.random()*S, y = Math.random()*S, r = 80 + Math.random()*150;
-    const c = neb[(Math.random()*neb.length)|0];
-    wrapped(() => {
-      const rg = g.createRadialGradient(x, y, 0, x, y, r);
-      rg.addColorStop(0, `rgba(${c[0]},${c[1]},${c[2]},0.11)`);
-      rg.addColorStop(1, "rgba(0,0,0,0)");
-      g.fillStyle = rg; g.beginPath(); g.arc(x, y, r, 0, 6.283); g.fill();
-    });
+  // puffy cumulus clouds, denser toward the horizon band
+  function cloud(cx, cy, scale, alpha) {
+    const puffs = 6 + (Math.random()*5 | 0);
+    for (let p = 0; p < puffs; p++) {
+      const ox = (Math.random()-0.5) * 150 * scale;
+      const oy = (Math.random()-0.5) * 38 * scale;
+      const r  = (34 + Math.random()*46) * scale;
+      const x = cx + ox, y = cy + oy;
+      wrapX(() => {
+        const rg = g.createRadialGradient(x, y - r*0.2, r*0.1, x, y, r);
+        rg.addColorStop(0, `rgba(255,255,255,${alpha})`);
+        rg.addColorStop(0.6, `rgba(245,250,255,${alpha*0.7})`);
+        rg.addColorStop(1, "rgba(255,255,255,0)");
+        g.fillStyle = rg; g.beginPath(); g.arc(x, y, r, 0, 6.283); g.fill();
+      });
+      // soft gray underbelly
+      wrapX(() => {
+        const rg2 = g.createRadialGradient(x, y + r*0.35, r*0.1, x, y + r*0.2, r*0.9);
+        rg2.addColorStop(0, `rgba(176,196,222,${alpha*0.30})`);
+        rg2.addColorStop(1, "rgba(176,196,222,0)");
+        g.fillStyle = rg2; g.beginPath(); g.arc(x, y + r*0.2, r*0.9, 0, 6.283); g.fill();
+      });
+    }
   }
 
-  // stars (additive so overlaps glow)
-  g.globalCompositeOperation = "lighter";
-  for (let i = 0; i < 720; i++) {
-    const x = Math.random()*S, y = Math.random()*S;
-    const big = Math.random() < 0.08;
-    const r = big ? Math.random()*1.4 + 1.0 : Math.random()*0.9 + 0.2;
-    const b = 0.45 + Math.random()*0.55;
-    const tint = Math.random() < 0.22 ? `rgba(160,210,255,${b})` : `rgba(255,255,255,${b})`;
-    wrapped(() => { g.fillStyle = tint; g.beginPath(); g.arc(x, y, r, 0, 6.283); g.fill(); });
+  for (let i = 0; i < 16; i++) {
+    const cx = Math.random()*W;
+    const cy = H * (0.30 + Math.random()*0.40);   // mid-to-horizon band
+    const scale = 0.6 + Math.random()*1.1;
+    cloud(cx, cy, scale, 0.85);
   }
-  // a handful of bright glow stars
-  for (let i = 0; i < 9; i++) {
-    const x = Math.random()*S, y = Math.random()*S, r = 6 + Math.random()*9;
-    wrapped(() => {
-      const rg = g.createRadialGradient(x, y, 0, x, y, r);
-      rg.addColorStop(0, "rgba(255,255,255,0.9)");
-      rg.addColorStop(0.3, "rgba(180,220,255,0.45)");
-      rg.addColorStop(1, "rgba(0,0,0,0)");
-      g.fillStyle = rg; g.beginPath(); g.arc(x, y, r, 0, 6.283); g.fill();
-    });
-  }
-  g.globalCompositeOperation = "source-over";
 
   const tex = new THREE.CanvasTexture(cv);
-  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.wrapS = THREE.RepeatWrapping;            // tile around the horizon
+  tex.wrapT = THREE.ClampToEdgeWrapping;       // keep the vertical gradient
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
 }
 
 function buildSky() {
   const tex = makeSkyTexture();
-  tex.repeat.set(5, 3);                       // tile the texture across the dome
-  const geo = new THREE.SphereGeometry(500, 40, 24);
+  tex.repeat.set(3, 1);                         // repeat clouds horizontally only
+  const geo = new THREE.SphereGeometry(1200, 48, 28);
   const m = new THREE.MeshBasicMaterial({
     map: tex, side: THREE.BackSide, fog: false, depthWrite: false,
   });
   scene.add(new THREE.Mesh(geo, m));
+}
+
+// ---------- procedural low-res grass ground texture (tiles) ----------
+function makeGrassGroundTexture() {
+  const S = 32;
+  const cv = document.createElement("canvas");
+  cv.width = cv.height = S;
+  const g = cv.getContext("2d");
+  g.fillStyle = "#4e8c3a"; g.fillRect(0, 0, S, S);
+  // high-frequency colour noise (tiles fine because it's per-pixel)
+  for (let i = 0; i < 1100; i++) {
+    const x = (Math.random()*S)|0, y = (Math.random()*S)|0, v = Math.random();
+    g.fillStyle = v < 0.33 ? "#43792f" : v < 0.66 ? "#5aa043" : "#4e8c3a";
+    g.fillRect(x, y, 1, 1);
+  }
+  // tiny blade dashes for texture
+  for (let i = 0; i < 70; i++) {
+    const x = (Math.random()*S)|0, y = (Math.random()*S)|0;
+    g.fillStyle = Math.random() < 0.5 ? "#3c6e2a" : "#67b04e";
+    g.fillRect(x, y, 1, 2);
+  }
+  return new THREE.CanvasTexture(cv);
+}
+
+// ---------- grass cards (billboard tufts) + distance LOD field ----------
+const GRASS_SPACING = 3, GRASS_RADIUS = 58;
+let grassMesh = null, grassOffsets = null, grassLastCX = Infinity, grassLastCZ = Infinity;
+
+function makeGrassBladeTexture() {
+  const W = 48, H = 64;
+  const cv = document.createElement("canvas");
+  cv.width = W; cv.height = H;
+  const g = cv.getContext("2d");
+  g.clearRect(0, 0, W, H);
+  const blades = 7;
+  for (let i = 0; i < blades; i++) {
+    const bx = 6 + (i/(blades-1))*(W-12) + (Math.random()-0.5)*4;
+    const topY = 6 + Math.random()*16;
+    const sway = (Math.random()-0.5)*10;
+    const w = 2.4 + Math.random()*1.6;
+    const grd = g.createLinearGradient(0, H, 0, topY);
+    grd.addColorStop(0, "#2f6b22");
+    grd.addColorStop(1, "#7cc24f");
+    g.fillStyle = grd;
+    g.beginPath();
+    g.moveTo(bx - w, H);
+    g.quadraticCurveTo(bx - w + sway*0.5, (H+topY)/2, bx + sway, topY);
+    g.quadraticCurveTo(bx + w + sway*0.5, (H+topY)/2, bx + w, H);
+    g.closePath(); g.fill();
+  }
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+// two crossed quads, pivot at the base (y = 0)
+function makeGrassCardGeometry(w, h) {
+  const hw = w/2, pos = [], uv = [], nrm = [];
+  const quad = (ax, az, bx, bz) => {
+    pos.push(ax,0,az, bx,0,bz, bx,h,bz,  ax,0,az, bx,h,bz, ax,h,az);
+    uv.push(0,0, 1,0, 1,1,  0,0, 1,1, 0,1);
+    for (let k = 0; k < 6; k++) nrm.push(0,1,0);
+  };
+  quad(-hw, 0, hw, 0);
+  quad(0, -hw, 0, hw);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+  geo.setAttribute("normal", new THREE.Float32BufferAttribute(nrm, 3));
+  return geo;
+}
+
+function buildGrass() {
+  const geo = makeGrassCardGeometry(2.0, 2.3);
+  const m = new THREE.MeshStandardMaterial({
+    map: makeGrassBladeTexture(), alphaTest: 0.45, side: THREE.DoubleSide,
+    roughness: 1, metalness: 0,
+  });
+  // grid offsets that fall within the LOD radius
+  const Hn = Math.ceil(GRASS_RADIUS/GRASS_SPACING) + 1;
+  grassOffsets = [];
+  for (let ox = -Hn; ox <= Hn; ox++)
+    for (let oz = -Hn; oz <= Hn; oz++)
+      if (Math.hypot(ox, oz)*GRASS_SPACING <= GRASS_RADIUS) grassOffsets.push([ox, oz]);
+  grassMesh = new THREE.InstancedMesh(geo, m, grassOffsets.length);
+  grassMesh.frustumCulled = false;
+  grassMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  scene.add(grassMesh);
+  grassLastCX = grassLastCZ = Infinity;
+}
+
+const _gm = new THREE.Matrix4(), _gq = new THREE.Quaternion(),
+      _gp = new THREE.Vector3(), _gs = new THREE.Vector3(), _ge = new THREE.Euler();
+function ghash(x, z) { const n = Math.sin(x*127.1 + z*311.7) * 43758.5453; return n - Math.floor(n); }
+
+// Recenter the finite grass field on the player so grass always surrounds them;
+// per-instance height/width fade to 0 at the radius edge = distance-based LOD.
+function recenterGrass() {
+  if (!grassMesh) return;
+  const s = GRASS_SPACING;
+  const cx = Math.round(player.pos.x/s), cz = Math.round(player.pos.z/s);
+  if (cx === grassLastCX && cz === grassLastCZ) return;
+  grassLastCX = cx; grassLastCZ = cz;
+  for (let i = 0; i < grassOffsets.length; i++) {
+    const ox = grassOffsets[i][0], oz = grassOffsets[i][1];
+    const wx = cx + ox, wz = cz + oz;
+    const h1 = ghash(wx, wz), h2 = ghash(wx + 57.3, wz - 19.1);
+    const px = wx*s + (h1-0.5)*s*0.85;
+    const pz = wz*s + (h2-0.5)*s*0.85;
+    const d = Math.hypot(px - player.pos.x, pz - player.pos.z);
+    let fade = (GRASS_RADIUS - d) / (GRASS_RADIUS*0.35);
+    fade = Math.max(0, Math.min(1, fade));
+    const hsc = (0.7 + h1*0.7) * fade;   // height varies + LOD fade
+    const wsc = (0.8 + h2*0.5) * fade;
+    _gp.set(px, 0, pz);
+    _ge.set(0, h2*6.283, 0); _gq.setFromEuler(_ge);
+    _gs.set(wsc, hsc, wsc);
+    _gm.compose(_gp, _gq, _gs);
+    grassMesh.setMatrixAt(i, _gm);
+  }
+  grassMesh.instanceMatrix.needsUpdate = true;
 }
 
 // helper: box mesh + collider, positioned by CENTER
@@ -257,19 +374,28 @@ function addOrb(x, y, z) {
 }
 
 function buildWorld() {
-  // ground (big)
-  const groundMat = mat(0x0c1330, 0x07203a, 0.25, 0.95);
-  addBox(0, -2, 0, 600, 4, 600, groundMat);
-  const grid = new THREE.GridHelper(600, 120, 0x1c6f7a, 0x12324a);
-  grid.position.y = 0.02; scene.add(grid);
+  // ---- large grass ground plane (procedural low-res tiling texture) ----
+  const groundTex = makeGrassGroundTexture();
+  groundTex.wrapS = groundTex.wrapT = THREE.RepeatWrapping;
+  groundTex.repeat.set(450, 450);                 // tile ~every 4 units
+  groundTex.magFilter = THREE.NearestFilter;      // crisp low-res look
+  groundTex.colorSpace = THREE.SRGBColorSpace;
+  const ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(1800, 1800),
+    new THREE.MeshStandardMaterial({ map: groundTex, roughness: 1, metalness: 0 })
+  );
+  ground.rotation.x = -Math.PI / 2;
+  scene.add(ground);
+  buildGrass();                                   // distance-based grass-card LOD field
 
-  const teal = mat(0x123b55, 0x1d6f7a, 0.5);
-  const deep = mat(0x141a3a, 0x202a66, 0.35);
-  const rose = mat(0x3a1430, 0x9c2a5a, 0.5);
+  // fantasy stone palette
+  const teal = mat(0x9aa0ad, 0x000000, 0, 0.9);   // light stone
+  const deep = mat(0x7d8390, 0x000000, 0, 0.92);  // mid stone
+  const rose = mat(0xb5876b, 0x000000, 0, 0.9);   // warm sandstone
 
-  // central plaza + glowing monument
+  // central plaza + glowing crystal monument
   addBox(0, 1, 0, 44, 2, 44, deep);
-  addBox(0, 14, 0, 4, 24, 4, mat(0x27e1c1, 0x27e1c1, 1.6, 0.3));
+  addBox(0, 14, 0, 4, 24, 4, mat(0x7ff0dd, 0x39d6c0, 1.3, 0.2));
   addOrb(0, 30, 0);
 
   // ring of 12 pillars
@@ -305,10 +431,10 @@ function buildWorld() {
     [ 0, 75, -160, 24, 4, 24],
   ];
   for (const [x,y,z,w,h,d] of islands) {
-    addBox(x, y, z, w, h, d, mat(0x10204a, 0x2a4cff, 0.5));
+    addBox(x, y, z, w, h, d, mat(0x6b9b4a, 0x000000, 0, 0.95));  // mossy floating earth
     addOrb(x, y + 4, z);
-    // a little spire on each
-    addBox(x, y + 6, z, 1.6, 8, 1.6, mat(0xff5d8f, 0xff5d8f, 1.4, 0.3));
+    // a glowing beacon spire on each
+    addBox(x, y + 6, z, 1.6, 8, 1.6, mat(0xffb347, 0xff7a18, 1.2, 0.4));
   }
 
   // a big arch / gateway to the south
@@ -320,7 +446,7 @@ function buildWorld() {
   // far stepping-stones leading way out (sense of scale)
   for (let i = 0; i < 6; i++) {
     const x = 60 + i*30, y = 8 + Math.sin(i)*6, z = -60 - i*28;
-    addBox(x, y, z, 10, 3, 10, mat(0x1a1140, 0x6a2cff, 0.5));
+    addBox(x, y, z, 10, 3, 10, mat(0x7d8a5a, 0x000000, 0, 0.95));  // mossy stepping stone
     if (i % 2) addOrb(x, y + 3, z);
   }
 
@@ -434,6 +560,9 @@ function update(dt) {
   // fell off the world
   if (player.pos.y < -40) respawn();
 
+  // keep the grass-card LOD field centred on the player
+  recenterGrass();
+
   // mesh + shadow
   player.mesh.position.copy(player.pos);
   player.shadow.position.set(player.pos.x, 0.03, player.pos.z);
@@ -465,8 +594,8 @@ function update(dt) {
 
 function onWin() {
   const t = (clock.elapsedTime).toFixed(1);
-  winText.innerHTML = "You collected all <b style='color:#ffd84d'>" + orbCount +
-    "</b> orbs.<br>Keep exploring — the hub is yours.";
+  winText.innerHTML = "You gathered all <b style='color:#ffd84d'>" + orbCount +
+    "</b> fae lights.<br>Keep wandering — the isles are yours.";
   winScreen.classList.remove("hidden");
 }
 
