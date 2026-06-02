@@ -581,19 +581,32 @@ function addExitGlow(x, z) {
 }
 
 function buildCaveEntrance(x, z) {
-  const mound = new THREE.Mesh(
+  const rock = new THREE.MeshStandardMaterial({ color: 0x6b6258, roughness: 1, flatShading: true });
+  const black = new THREE.MeshBasicMaterial({ color: 0x000000 });
+
+  // decorative hill behind the entrance
+  const hill = new THREE.Mesh(
     new THREE.SphereGeometry(1, 14, 10),
-    new THREE.MeshStandardMaterial({ color: 0x5b6450, roughness: 1, flatShading: true })
+    new THREE.MeshStandardMaterial({ color: 0x57883a, roughness: 1, flatShading: true })
   );
-  mound.position.set(x, 0, z); mound.scale.set(16, 15, 14);
-  worldRoot.add(mound);
-  // dark opening
-  addBox(x, 2.6, z - 9, 7, 8, 6, new THREE.MeshBasicMaterial({ color: 0x000000 }), false);
-  // framing rocks
-  addRock(x - 4.8, z - 9.5, 2.7); addRock(x + 4.8, z - 9.5, 2.7);
-  addRock(x - 7.5, z - 5, 2.3);   addRock(x + 7.5, z - 5, 2.3);
-  // walk-in trigger at the mouth
-  caveTrigger = { pos: new THREE.Vector3(x, 1.5, z - 11), radius: 4.2 };
+  hill.position.set(x, 0, z + 7); hill.scale.set(16, 13, 13);
+  worldRoot.add(hill);
+
+  // doorway frame (all solid) — opening is the gap between the jambs
+  addBox(x - 3,  4,   z, 3, 8, 3, rock);     // left jamb
+  addBox(x + 3,  4,   z, 3, 8, 3, rock);     // right jamb
+  addBox(x,      8.5, z, 9, 3, 3, rock);     // lintel
+  // wing walls so you can't just walk around the sides
+  addBox(x - 6.5, 4, z + 0.5, 4, 8, 6, rock);
+  addBox(x + 6.5, 4, z + 0.5, 4, 8, 6, rock);
+  // dark recess behind the doorway (no collider) — reads as the cave mouth
+  addBox(x, 3.5, z + 2.6, 4.6, 7, 3, black, false);
+
+  // a couple of framing boulders
+  addRock(x - 5.5, z - 1.5, 2.2); addRock(x + 5.5, z - 1.5, 2.2);
+
+  // walk-in trigger sits in the doorway gap
+  caveTrigger = { pos: new THREE.Vector3(x, 1.5, z + 0.6), radius: 2.6 };
 }
 
 // ---------- level management ----------
